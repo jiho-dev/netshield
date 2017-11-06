@@ -1,0 +1,16 @@
+#
+# NetShield configuration
+#
+
+menu "NetShield Extension"
+
+config DISABLE_MODPOST_CHECK_VERION
+	bool "Disable checking version for Kernel Module"
+
+config NETSHIELD_HOOK
+	bool "Support NetShield Hook"
+#	select BRIDGE_NETFILTER
+#
+
+
+endmenu
