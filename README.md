@@ -1,7 +1,11 @@
 **NetShield**
 =====================
 
-NetShield is Firewall on Linux. It uses Netfilter HOOK script, but not Netfilter Module. NetShield replaces Netfilter and has its own framework to meet Firewall functionalities. It will gurantees wire speed on multi-10G NICs with the smallest packets(aka 64 Bytes). Now NetShield runs as a Linux kernel module, but soon will support DPDK for better performance.
+NetShield is Firewall on Linux. It uses Netfilter HOOK script to receive packets, but is not Netfilter Module. It also replaces Netfilter and has its own framework to meet Firewall functionalities. Such as maintaining sessions, looking up the Firewall rules, and tiny pluggable modules.
+
+The performance of NetShield is to meet the needs in recent network infrastructure, which has multi-10G and 40G NICs possibily receiving the smallest packets(aka 64 Bytes). The hardware running NetShield is not specified. All of the general x86 platform accommodating Linux well can be used without any peripheral devices.
+
+Now NetShield runs as a Linux kernel module, but soon will support DPDK for better performance. As you know, DPDK is a novel plaform to develop the Firewall and IDS/IPS. It has fundamentally different mechanism to receive huge amount of packets and pass them to the application which has mainly its own purpose.
 
 NetShield adopts brand-new technologies:
 * Packet Classification: HyperSplit
