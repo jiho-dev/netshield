@@ -18,10 +18,10 @@ NetShield adopts brand-new technologies:
 * Sesstion Table supported more than 100M tuples: Done
 * Packet Classification: Done
 * TCP Stateful Tracking: Done
-* NAT: Soon
+* NAT: Under developing
+* ARP proxy: Soon
 * BlackList matching Source IP: Soon
 * TCP MSS Hack: Soon
-* ARP proxy: Soon
 * Support DPDK: TBD
 * IPV6: TBD
 * IP v4/v6 Fragmention: TBD
