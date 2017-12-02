@@ -37,7 +37,7 @@ NetShield adopts brand-new technologies:
 
 * OS: Ubuntu 1604 or higher version
 * Required package: libjons-c
-* How compile: it is very simple, just type make at each subdirectories.
+* Compile: it is very simple, just type make at each subdirectories.
 <pre><code>
 git clone https://github.com/jhjgithub/netshield.git
 cd netshield
