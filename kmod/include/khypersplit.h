@@ -30,6 +30,33 @@ struct hypersplit_s {
 
 typedef struct hypersplit_s hypersplit_t;
 
+#if 0
+typedef struct hs_matched_s {
+	uint32_t fwid;
+	uint32_t natid;
+} hs_matched_t;
+#endif
+
+enum {
+	DIM_INV		= -1,
+	DIM_SIP		= 0,
+	DIM_DIP		= 1,
+	DIM_SPORT	= 2,
+	DIM_DPORT	= 3,
+	DIM_PROTO	= 4,
+	DIM_NIC		= 5,
+	DIM_MAX		= 6
+};
+
+typedef struct pktinfo_s {
+	uint32_t	dims[DIM_MAX];
+} pktinfo_t;
+
+#define HS_NO_RULE UINT_MAX 	// NODE_NUM_MAX is less than UINT_MAX
+
+///////////////////////////////////////////////
+
+uint32_t hypersplit_search(hypersplit_t *hs, pktinfo_t *pkt);
 
 #endif
 

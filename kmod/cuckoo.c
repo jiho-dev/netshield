@@ -1,19 +1,8 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
-#include <session.h>
-#include <smgr.h>
-#include <ns_task.h>
+#include <typedefs.h>
 #include <ns_macro.h>
-#include <commands.h>
 #include <log.h>
-#include <extern.h>
-#include <version.h>
-#include <misc.h>
-#include <inline.h>
-#include <options.h>
 #include <ns_malloc.h>
 #include <cuckoo.h>
 

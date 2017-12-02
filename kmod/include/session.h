@@ -1,9 +1,11 @@
 #ifndef __SESSION_H__
 #define __SESSION_H__
 
-struct ns_task_s;
+#include <skey.h>
+#include <timer.h>
+#include <nat.h>
 
-/// NAT sequence number modifications for FTP Proxy
+// NAT sequence number modifications for FTP Proxy
 typedef struct proxy_ftp_seq_t {
 	uint32_t correction_pos; 	///< position of the last TCP sequence number modification (if any)
 
@@ -11,7 +13,8 @@ typedef struct proxy_ftp_seq_t {
 	int16_t offset_after;
 } pftp_seq_t;
 
-/// tcp assembly buff
+#if 0
+// tcp assembly buff
 typedef struct _tcp_assembed_buf {
 	uint32_t 	isn; 		///< initial SEQ number
 	uint16_t 	tlen; 		///< data buffer length
@@ -19,8 +22,9 @@ typedef struct _tcp_assembed_buf {
 
 	char 		data[0];
 } tcp_asbuf_t;
+#endif
 
-/// tcp sequence tracking
+// tcp sequence tracking
 typedef	struct	_tcp_seq_t {
 	uint32_t	end;		///< last seq(seq + len)
 	uint32_t	maxend; 	///< max of ack
@@ -39,7 +43,7 @@ typedef	struct	_tcp_seq_t {
 #define TS_MAX_WSCALE	14
 #define TS_MAXACKWINDOW	65535
 
-/// tcp state tracking
+// tcp state tracking
 typedef struct _tcp_state_t {
 	tseq_t 		tseq[2]; 		///< 0:RES, 1:REQ, connection parameters per direction
 	int32_t 	synp_diff_seq;	///< diff between cookie ISN and Server's ISN 
@@ -53,7 +57,8 @@ typedef struct _tcp_state_t {
 #define pftpseq 	u.pftp_seq
 #define pftpparent 	u.parent
 
-/// IPS 상태 정보
+#if 0
+// IPS 상태 정보
 typedef struct _ips_state {
 	int32_t 	smd_state[2];	///< The latest State of ACSM(0: Response, 1: Request)
 	uint32_t 	last_drop_seq;	///< latest tcp seq of dropped pkt
@@ -61,6 +66,7 @@ typedef struct _ips_state {
 	int8_t 		saved_pkt_cnt;  ///< saved packet count for ips by per session
 	uint16_t 	dummy;
 } ipsst_t;
+#endif
 
 ////////////////////////////////////////////////
 // type of session_t.flags
@@ -76,15 +82,15 @@ typedef struct _ips_state {
 #define SFLAG_SEARCH_HOLD		0x00010000	// 세션 검색에서 검색되어 hold된 세션
 
 // session_t.sid
-#define SFLAG_SID_MASK 		0x0FFFFFFF 	// 28bits
-#define SFLAG_NID_MASK 		0xF0000000 	// Node ID(VRRP ID)
+#define SFLAG_SID_MASK 			0x0FFFFFFF 	// 28bits
+#define SFLAG_NID_MASK 			0xF0000000 	// Node ID(VRRP ID)
 #define SFLAG_NID_SHIFT  		28
 #define SFLAG_GET_NID(id) 		((id & SFLAG_NID_MASK) >> SFLAG_NID_SHIFT)
 #define SFLAG_GET_SID(id)		(id & SFLAG_SID_MASK)
 
 /// session data struct
 typedef struct session_s{
-	sk_t 		sk;			///< session key
+	skey_t 		skey;		///< session key
 	list_head_t alist; 		///< 전체 리스트 연결
 
 	uint32_t 	sid;		///< NID(4 bits) + SSEQ(28 bits)
@@ -96,12 +102,13 @@ typedef struct session_s{
 	atomic_t	refcnt;		///< 세션 참조 카운트
 	int32_t 	timeout; 	///< 룰에서 복사된 값이며, 룰에 타임아웃 값이 없는 경우(-1) 시스템 기본값 사용.
 	rcu_head_t 	rcu;
-	uint32_t 	drop_pkts;		///< dropped packet counts
-	tcpst_t		tcpst; 			///< tcp stat
+	uint32_t 	drop_pkts;	///< dropped packet counts
+	tcpst_t		tcpst; 		///< tcp stat
 
-	uint32_t 	fwpolicy_id;
-	uint32_t 	fwpolicy_idx;
-	uint32_t 	fwpolicy_ver;
+	natinfo_t 	natinfo;
+
+	mpolicy_t 	mp_fw;
+	mpolicy_t 	mp_nat;
 
 	//nstimer_t 	timer  ____cacheline_aligned_in_smp;
 	nstimer_t 	timer;
@@ -113,12 +120,14 @@ typedef struct session_s{
 
 void* 	session_init(void);
 void  	session_clean(void *stab);
-uint32_t session_make_hash(sk_t *sk);
+uint32_t session_make_hash(skey_t *skey);
+uint32_t session_make_nat_hash(session_t *si);
 int32_t session_insert(void *stab, session_t *si);
 int32_t session_remove(void *stab, session_t *si);
 void 	session_hold(session_t *si);
 void 	session_release(session_t *si);
-session_t* session_search(void *stab, sk_t *sk);
+session_t* session_search(void *stab, skey_t *skey);
 session_t *session_alloc(void);
+void session_free(session_t *si);
 
 #endif

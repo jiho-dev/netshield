@@ -1,13 +1,12 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <skey.h>
-#include <timer.h>
-#include <session.h>
-#include <ns_task.h>
+#include <typedefs.h>
 #include <ns_macro.h>
+#include <ns_task.h>
+#include <session.h>
 #include <tcp_state.h>
 #include <options.h>
+#include <parse_proto.h>
 
 //////////////////////////////////////////////////////
 
@@ -51,106 +50,6 @@ DECLARE_DBG_LEVEL(2);
 
 //////////////////////////////////////////////////////////////
 
-int32_t parse_tcp_options(ns_task_t* nstask)
-{
-	uint8_t buff[40];
-	uint8_t *ptr;
-	int32_t length = nstask->l4_hlen - sizeof(struct tcphdr);
-	int32_t opsize, i;
-	uint32_t tmp;
-
-	if (length < 1)
-		return 0;
-
-	ptr = skb_header_pointer(nstask->pkt, nstask->ip_hlen + sizeof(struct tcphdr), length, buff);
-	if (ptr == NULL)
-		return -1;
-
-	nstask->topt.td_scale = nstask->topt.flags = nstask->topt.sack = 0;
-
-	while (length > 0) {
-		int32_t opcode=*ptr++;
-
-		switch (opcode) {
-		case TCPOPT_EOL:
-			return 0;
-
-		case TCPOPT_NOP:	/* Ref: RFC 793 section 3.1 */
-			length--;
-			continue;
-
-		default:
-			opsize=*ptr++;
-
-			if (opsize < 2) /* "silly options" */
-				return 0;
-
-			if (opsize > length)
-				break;	/* don't parse partial options */
-
-			switch(opcode) {
-			case TCPOPT_SACK_PERM:
-				if (opsize == TCPOLEN_SACK_PERM)
-					nstask->topt.flags |= TOPT_FLAG_SACK_PERM;
-				break;
-
-			case TCPOPT_WINDOW:
-				if (opsize == TCPOLEN_WINDOW) {
-					nstask->topt.td_scale = *(uint8_t *)ptr;
-
-					if (nstask->topt.td_scale > 14) {
-						/* See RFC1323 */
-						nstask->topt.td_scale = 14;
-					}
-
-					nstask->topt.flags |= TOPT_FLAG_WINDOW_SCALE;
-				}
-				break;
-
-			case TCPOPT_MSS:
-				if(opsize == TCPOLEN_MSS) {
-					nstask->topt.mss = ntohs(get_unaligned((__u16 *)ptr));
-					nstask->topt.flags |= TOPT_FLAG_MSS;
-				}
-				break;
-
-			case TCPOPT_SACK:
-				if ( (opsize >= (TCPOLEN_SACK_BASE + TCPOLEN_SACK_PERBLOCK))
-					&& !((opsize - TCPOLEN_SACK_BASE) % TCPOLEN_SACK_PERBLOCK)) {
-
-					for (i = 0; i < (opsize - TCPOLEN_SACK_BASE); i += TCPOLEN_SACK_PERBLOCK) {
-						tmp = ntohl(*((u_int32_t *)(ptr+i)+1));
-
-						if (after(tmp, nstask->topt.sack)) {
-							nstask->topt.flags |= TOPT_FLAG_SACK;
-							nstask->topt.sack = tmp;
-						}
-					}
-				}
-
-				break;
-
-			case TCPOPT_TIMESTAMP:
-				if (opsize == TCPOLEN_TIMESTAMP) {
-					uint32_t *tsecr;
-
-					nstask->topt.flags |= TOPT_FLAG_TIMESTAMP;
-					tsecr = (uint32_t*)ptr;
-
-					//opt_rx->rcv_tsval = get_unaligned_be32(ptr);
-					nstask->topt.tsval = ntohl(*tsecr);
-				}
-
-			} // end of opcode
-
-			ptr += opsize - 2;
-			length -= opsize;
-		}
-	}
-
-	return 0;
-}
-
 uint32_t optlen(const uint8_t *opt, uint32_t offset)
 {
 	/* Beware zero-length options: make finite progress */
@@ -162,6 +61,7 @@ uint32_t optlen(const uint8_t *opt, uint32_t offset)
 
 int32_t tcp_mss_main(ns_task_t* nstask) 
 {
+
 	return NS_ACCEPT;
 }
 
@@ -490,6 +390,10 @@ uint32_t tcp_init_seq(ns_task_t *nstask)
 	th = ns_tcph(nstask->pkt);
 	tcpst = &nstask->si->tcpst;
 
+	if (th == NULL) {
+		dbg(0, "th is null !");
+	}
+
 	// 다음 패킷의 시작 seq
 	tcpst->tseq[0].end = ntohl(th->seq) + nstask->l4_dlen + (th->syn + th->fin);
 	tcpst->tseq[0].maxwin = ntohs(th->window);
@@ -514,13 +418,14 @@ uint32_t tcp_init_seq(ns_task_t *nstask)
 	/* TCP window scale option이 있으면 플래그를 설정한다.
 	 * syn이 설정되어 있을 때만 해당 옵션이 존재한다. */
 	if (th->syn) {
-		if ((nstask->topt.flags & TOPT_FLAG_WINDOW_SCALE) && 
-			nstask->topt.td_scale != 0) {
-			tcpst->tseq[0].wscale = nstask->topt.td_scale;
+		topt_t *topt = (topt_t*)&nstask->topt;
+		if ((topt->flags & TOPT_FLAG_WINDOW_SCALE) && 
+			topt->td_scale != 0) {
+			tcpst->tseq[0].wscale = topt->td_scale;
 			tcpst->tseq[0].flags = TS_WSCALE_SEEN | TS_WSCALE_FIRST;
 		}
 
-		if ((nstask->topt.flags & TOPT_FLAG_SACK_PERM)) {
+		if ((topt->flags & TOPT_FLAG_SACK_PERM)) {
 			tcpst->tseq[0].flags |= TS_SACK_PERMIT;
 		}
 	}
@@ -686,13 +591,14 @@ uint32_t tcp_track_seq(ns_task_t *nstask)
 		/* window scale option이 있는 경우 플래그 세팅
 		 * 없는 경우 peer의 window scale옵션 취소 */
 
-		if (nstask->topt.flags & TOPT_FLAG_WINDOW_SCALE &&
-			nstask->topt.td_scale != 0) {
-			ts_req->wscale = nstask->topt.td_scale;
+		topt_t *topt = (topt_t*)&nstask->topt;
+		if (topt->flags & TOPT_FLAG_WINDOW_SCALE &&
+			topt->td_scale != 0) {
+			ts_req->wscale = topt->td_scale;
 			ts_req->flags   = TS_WSCALE_SEEN | TS_WSCALE_FIRST;
 		} 
 
-		if ((nstask->topt.flags & TOPT_FLAG_SACK_PERM)) {
+		if ((topt->flags & TOPT_FLAG_SACK_PERM)) {
 			ts_req->flags |= TS_SACK_PERMIT;
 		}
 	}

@@ -1,7 +1,6 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <skey.h>
+#include <typedefs.h>
 #include <ns_task.h>
 #include <ns_macro.h>
 #include <commands.h>
@@ -9,6 +8,7 @@
 #include <extern.h>
 #include <version.h>
 #include <misc.h>
+#include <arp_proxy.h>
 
 DECLARE_DBG_LEVEL(2);
 extern uint32_t 	netshield_running;
@@ -21,24 +21,27 @@ int32_t arpp_rcv(skb_t *skb, netdev_t *dev, struct packet_type *pt, netdev_t *or
 /*         Code 영역                */
 /* -------------------------------- */
 
-int32_t lkm_post_main(int32_t ret, netshield_hook_state_t *state)
+int32_t lkm_verdict(int32_t ret, netshield_hook_state_t *state)
 {
 	OKFN okfn = (OKFN)state->okfn;
 
 	switch (ret) {
 	case NS_ACCEPT:
+	case NS_QUEUE:
+	case NS_STOP:
 		if (state->call_okfn && okfn)
 			ret = okfn(state->net, state->sk, state->skb);
 		break;
+
 	case NS_STOLEN:
-	case NS_QUEUE:
 		ret = 0;
 		break;
+
 	case NS_REPEAT:
 		ret = -ERANGE;
 		break;
+
 	case NS_DROP:
-	case NS_STOP:
 	default:
 		kfree_skb(state->skb);
 		ret = -EPERM;
@@ -67,7 +70,7 @@ int32_t lkm_main(netshield_hook_state_t *state)
 
 #if 0
 	if (state->pf == PF_INET6) {
-		if (!OPT_VAL(ipv6)) {
+		if (!GET_OPT_VALUE(ipv6)) {
 			return NS_DROP;
 		}
 
@@ -78,13 +81,35 @@ int32_t lkm_main(netshield_hook_state_t *state)
 	return netshield_main(state);
 }
 
+int32_t lkm_post_main(netshield_hook_state_t *state)
+{
+	skb_t  *skb = state->skb;
+	ns_task_t* 	nstask = NULL;
+
+	if (unlikely(!skb)) {
+		return NS_ACCEPT;
+	}
+
+	prefetch(skb->data);
+
+	nstask = (ns_task_t*)&skb->nstask[0];
+	
+	if (nstask->pkt != skb || nstask->si == NULL) {
+		return NS_ACCEPT;
+	}
+
+	dbg(0, "Start Post Main");
+
+	return netshield_post_main(state);
+}
+
 int32_t setup_in_dev(netshield_hook_state_t *state)
 {
 	if (state->pf == PF_INET6) {
 #if 0
 		iph6_t* iph;
 
-		iph = wiph6(state->skb);
+		iph = ns_iph6(state->skb);
 		in_dev = ns_get_nic_by_ip6((ip_t*)&iph->saddr);
 #endif
 	}
@@ -166,12 +191,12 @@ int32_t lkm_hook_ip_pkt(netshield_hook_state_t *state)
 	case NS_HOOK_POST_ROUTING:
 #if 0
 		// 패킷이 마지막으로 거치는 hook
-		DBG(5, "hook=%d, skb=0x%p, in=%s, out=%s", 
+		DBG(0, "hook=%d, skb=0x%p, in=%s, out=%s", 
 			state->hook, state->skb, in_dev?in_dev->name:"NULL", 
 			out_dev?out_dev->name:"NULL");
 #endif
 
-		ret = NS_ACCEPT;
+		ret = lkm_post_main(state);
 		break;
 
 	case NS_HOOK_LOCAL_IN:
@@ -200,10 +225,9 @@ int32_t lkm_hook_ip_pkt(netshield_hook_state_t *state)
 END:
 
 	// 2. check result and call okfn
-	return lkm_post_main(ret, state);
+	return lkm_verdict(ret, state);
 }
 
-#if 0
 int32_t lkm_hook_arp_pkt(netshield_hook_state_t *state)
 {
 	// ARP는 받아 들인다.
@@ -224,9 +248,8 @@ int32_t lkm_hook_arp_pkt(netshield_hook_state_t *state)
 
 END:
 	// 2. check result and call okfn
-	return lkm_post_main(ret, state);
+	return lkm_verdict(ret, state);
 }
-#endif
 
 /////////////////////////////////////////////////////////////
 /////
@@ -245,13 +268,13 @@ netshield_hook_t lkm_ip6_hook =
 	.pf = PF_INET6,
 	.ns_main = lkm_hook_ip_pkt,
 };
+#endif
 
 netshield_hook_t lkm_arp_hook = 
 {
 	.pf = NFPROTO_ARP,
 	.ns_main = lkm_hook_arp_pkt,
 };
-#endif
 
 
 /////////////////////////////////////////////////////////////
@@ -273,9 +296,6 @@ int32_t  lkm_init(void)
 		return -1;
 	}
 
-	// 패닉 핸들러 초기화
-	//init_panic_dump();
-
 	// HOOKing
 	if (register_netshield_hook(&lkm_ip_hook)) {
 		ns_err("Can't register IPv4 NetShield Hook");
@@ -287,21 +307,21 @@ int32_t  lkm_init(void)
 		ns_err("Can't register IPv6 NetShield Hook");
 		return -1;
 	}
+#endif
 
 	if (register_netshield_hook(&lkm_arp_hook)) {
 		ns_err("Can't register ARP NetShield Hook");
 		return -1;
 	}
-#endif
 
 	ns_log("Start NetShield Module V%d.%d%s", 
-			 NETSHIELD_VERSION_MAJ, NETSHIELD_VERSION_MIN, 
+		   NETSHIELD_VERSION_MAJ, NETSHIELD_VERSION_MIN, 
 #ifdef CONFIG_NS_DEBUG
-			 "-Debug"
+		   "-Debug"
 #else
-			 ""
+		   ""
 #endif
-			 );
+		  );
 
 	netshield_enable();
 
@@ -320,10 +340,9 @@ void lkm_clean(void)
 
 	unregister_netshield_hook(lkm_ip_hook.pf);
 	//unregister_netshield_hook(lkm_ip6_hook.pf);
-	//unregister_netshield_hook(lkm_arp_hook.pf);
+	unregister_netshield_hook(lkm_arp_hook.pf);
 
 	netshield_clean();
-	//clean_panic_dump();
 
 	ns_log("Stop NetShield Module");
 

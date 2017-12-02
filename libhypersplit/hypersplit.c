@@ -139,7 +139,7 @@ static int hs_trigger(struct hs_runtime *hsrt)
 	static uint32_t space[DIM_MAX][2] = {
 		{ 0, UINT32_MAX }, { 0, UINT32_MAX },
 		{ 0, UINT16_MAX }, { 0, UINT16_MAX },
-		{ 0, UINT8_MAX	}
+		{ 0, UINT8_MAX	}, { 0, UINT8_MAX  }
 	};
 
 	//assert(hsrt && hsrt->trees);

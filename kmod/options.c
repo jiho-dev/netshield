@@ -1,20 +1,13 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
-#include <session.h>
-#include <smgr.h>
-#include <ns_task.h>
+#include <typedefs.h>
 #include <ns_macro.h>
-#include <commands.h>
-#include <log.h>
-#include <extern.h>
+#include <session.h>
 #include <version.h>
-#include <misc.h>
 #include <options.h>
 #include <ns_malloc.h>
 #include <ns_sysctl.h>
+#include <smgr.h>
 
 
 //////////////////////////////////////////////////////
@@ -41,6 +34,10 @@ void dbgctl_unregister_proc(void);
 extern seqops_t seq_dbgctl_ops;
 extern ctl_table_t dbgctl_opt[];
 #endif
+
+extern seqops_t seq_natip_ops;
+
+
 
 int32_t show_session_count(ctl_table_t *table, int32_t write, void __user *buffer, size_t *lenp, loff_t *ppos);
 int32_t show_atomic(ctl_table_t *table, int32_t write, void __user *buffer, size_t *lenp, loff_t *ppos);
@@ -85,6 +82,7 @@ seqops_t seq_opt_ops = {
 
 static seq_proc_t seq_proc_tab [] = {
 	{"all_options",			&seq_opt_ops, 		NULL},
+	{"nat_arp_proxy_list",	&seq_natip_ops, 		NULL},
 
 	{.name = NULL},
 };
@@ -97,6 +95,7 @@ option_t ns_options [] __read_mostly = {
     OPT_ITEM(all_drop_log,      0,          0,      1,      O_W|O_U,    PROC_MIN_MAX),
     OPT_ITEM(all_drop_log_skip_by_seq,1,    0,      1,      O_W,        PROC_MIN_MAX),
     OPT_ITEM(info_log_interval, 60,         0,      86400,  O_W,        PROC_MIN_MAX),
+    OPT_ITEM(nat_arp_proxy,		1,          0,      1,  	O_W,        PROC_MIN_MAX),
     // 기능 항목 끝
 
     // 2. Define options

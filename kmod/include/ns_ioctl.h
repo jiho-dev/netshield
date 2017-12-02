@@ -6,7 +6,7 @@
 
 enum {
 	IOCTL_START = 0,
-	IOCTL_APPLY_FW_POLICY,
+	IOCTL_APPLY_POLICY,
 	IOCTL_DUMMY, 				// 2번은 인식하지 못한다. ?????
 	IOCTL_SESSION_INFO,
 

@@ -42,7 +42,7 @@ int load_rules(struct rule_set *p_rs, const char *s_rf, int fmt)
 
 	if (fmt == RULE_FMT_NS) {
 		scn_fmt = NS_RULE_FMT_SCN;
-		args = 23;
+		args = 25;
 	}
 
 	fp_rule = fopen(s_rf, "r");
@@ -94,7 +94,9 @@ int load_rules(struct rule_set *p_rs, const char *s_rf, int fmt)
 							 &dst_ip[1][0], &dst_ip[1][1], &dst_ip[1][2], &dst_ip[1][3],
 							 &rules[i].dims[DIM_SPORT][0], &rules[i].dims[DIM_SPORT][1],
 							 &rules[i].dims[DIM_DPORT][0], &rules[i].dims[DIM_DPORT][1],
-							 &rules[i].dims[DIM_PROTO][0], &rules[i].dims[DIM_PROTO][1], &act, msg);
+							 &rules[i].dims[DIM_PROTO][0], &rules[i].dims[DIM_PROTO][1], 
+							 &rules[i].dims[DIM_NIC][0], &rules[i].dims[DIM_NIC][1], 
+							 &act, msg);
 			if (scn_cnt < args) {
 				printf("Line: %d - Illegal rule format, Read args: %d\n", line_no, scn_cnt);
 				//ret = -ENOTSUP;
@@ -135,6 +137,15 @@ int load_rules(struct rule_set *p_rs, const char *s_rf, int fmt)
 
 			if (act == 'a' || act == 'A' ) {
 				rules[i].flags = RULE_ALLOW;
+			}
+			else if (act == 'n' || act == 'N' ) {
+				rules[i].flags = RULE_SNAT;
+			}
+			else if (act == 'd' || act == 'D' ) {
+				printf("Drop Rule: id=%d \n", i);
+			}
+			else {
+				printf("unknown action: id=%d, act=%c \n", i, act);
 			}
 			
 		}
@@ -179,7 +190,7 @@ int load_rules(struct rule_set *p_rs, const char *s_rf, int fmt)
 
 		}
 
-#if 0
+#if 1
 		printf("(%u:%u), (%u:%u), (%u:%u), (%u:%u), (%u:%u) \n",
 			   rules[i].dims[DIM_SIP][0],
 			   rules[i].dims[DIM_SIP][1],

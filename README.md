@@ -17,9 +17,9 @@ NetShield adopts brand-new technologies:
 
 * Sesstion Table supported more than 100M tuples: Done
 * Packet Classification: Done
-* TCP Stateful Tracking: Done
-* NAT: Under developing
-* ARP proxy: Soon
+* TCP Stateful Tracking: Done(2017/10/30)
+* NAT: Done(2017/12/2)
+* ARP proxy: Done(2017/12/2)
 * BlackList matching Source IP: Soon
 * TCP MSS Hack: Soon
 * Support DPDK: TBD
@@ -32,6 +32,86 @@ NetShield adopts brand-new technologies:
 * Exact Pattern Matching for DPI: TBD
 * PCRE Pattern Matching for DPI: TBD
 * Rate Limits: TBD
+
+## Compile: 
+
+* OS: Ubuntu 1604 or higher version
+* Required package: libjons-c
+* How compile: it is very simple, just type make at each subdirectories.
+<pre><code>
+git clone https://github.com/jhjgithub/netshield.git
+cd netshield
+cd linux-4.10.17
+make menuconfig
+make bImage
+...
+cd ../libhypersplit
+make
+...
+cd ../kmod
+make
+...
+cd ../nsctl
+make
+...
+</code></pre>
+
+## NetShield Policy Format:
+
+NetShield uses JSON for its policy format. It is very easy for you to learn how to write the policy.
+Policy File:
+<pre><code>
+{
+	"version": "1.0",
+	"id" 	: "NetShield",
+	"desc" 	: "This is NetShield Policies",
+	"policy" : {
+		"firewall" 	: [
+			{
+			"desc" 	: "SSH Server",
+			"src_ip"  : [ "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "204.152.188.196",  "204.152.188.196"],
+			"src_port": [  0, 65535],
+			"dst_port": [  22, 22],
+			"protocol": [  6, 6],
+			"nic"     : [  "eth0", "eth0"],
+			"action"  : "allow",
+			"state"   : "enable",
+			},
+		],
+
+		"nat"  		: [
+			{
+			"desc" : "SNAT Rule",
+			"src_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"src_port": [  0, 65535],
+			"dst_port": [  0, 65535],
+			"protocol": [  0, 255],
+			"nic"     : [  "any", "any"],
+			// snat, dnat, bnat, pnat
+			"action"  : "snat",		
+			"state"   : "enable",
+			"nat_info": 
+			{
+				"snat": 
+				{
+					// snat_masking, snat_hash, snat_napt, dnat_redir, dnat_local_redir
+					"type": "snat_napt", 
+					//"option": ["arp_proxy", "dynamic_ip"],
+					"option": ["arp_proxy"],
+					"nic": "eth2",	// any, eth0 ~
+					"nat_ip":   [  "1.1.1.3", "1.1.1.3"],
+					"nat_port": [  3000, 65535],
+				},
+				"dnat": {
+				},
+			},
+			},
+		],
+	}
+}
+</code></pre>
 
 ## References: 
 
@@ -53,4 +133,8 @@ MemC3
 
 HyperSplit
 - http://security.riit.tsinghua.edu.cn/teacher/THU-USC-5th-Forum.pdf
+
+## Contact me:
+
+* You can reach me at irongate@naver.com
 

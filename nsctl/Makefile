@@ -10,12 +10,12 @@ INC_DIR+= -I$(HSLIB_DIR)
 CFLAGS += $(INC_DIR)
 
 LIB_DIR+= -L$(HSLIB_DIR)
-LIBS = -lhs
+LIBS = -lhs -ljson-c
 
 LDFLAGS += $(LIB_DIR) -Wl,-rpath=$(HSLIB_DIR)
 
 BIN = nsctl
-SRC=main.c 
+SRC=build_hs.c  ioctl.c  main.c  parse_policy_json.c
 DEP = $(patsubst %.c, $(OBJ_DIR)/%.d, $(SRC))
 OBJ = $(patsubst %.c, $(OBJ_DIR)/%.o, $(SRC))
 

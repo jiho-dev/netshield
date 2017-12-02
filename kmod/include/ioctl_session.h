@@ -3,7 +3,7 @@
 
 
 typedef struct ioctl_session_s {
-	sk_t 		sk;	
+	skey_t 		skey;	
 	uint32_t 	sid;
 	uint32_t	flags;
 	uint64_t	action; 
@@ -14,8 +14,7 @@ typedef struct ioctl_session_s {
 	//tcpst_t		tcpst; 
 
 	uint32_t 	fwpolicy_id;
-	uint32_t 	fwpolicy_idx;
-	uint32_t 	fwpolicy_ver;
+	uint32_t 	natpolicy_id;
 
 } ioctl_session_t;
 

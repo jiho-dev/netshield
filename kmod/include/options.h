@@ -35,6 +35,7 @@ enum opt_idx {
 	OPT_ITEM_IDX(all_drop_log),
 	OPT_ITEM_IDX(all_drop_log_skip_by_seq),
 	OPT_ITEM_IDX(info_log_interval),
+	OPT_ITEM_IDX(nat_arp_proxy),
 
 	//
 	OPT_ITEM_IDX(age_interval),

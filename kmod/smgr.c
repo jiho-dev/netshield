@@ -1,22 +1,17 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
-#include <session.h>
-#include <ns_task.h>
+#include <typedefs.h>
 #include <ns_macro.h>
+#include <session.h>
 #include <commands.h>
-#include <smgr.h>
 #include <log.h>
-#include <misc.h>
 #include <ns_malloc.h>
 #include <khypersplit.h>
-#include <fw_policy.h>
 #include <pmgr.h>
 #include <ioctl_session.h>
 #include <options.h>
 #include <tcp_state.h>
+#include <smgr.h>
 
 
 //////////////////////////////////////////////////////
@@ -30,8 +25,7 @@ DECLARE_DBG_LEVEL(2);
 
 void netshield_create_sem_cache(int32_t size);
 int32_t smgr_post_main(ns_task_t *nstask);
-fw_policy_t* pmgr_get_fw_policy(policyset_t *ps, uint32_t ruleid);
-policyset_t* pmgr_get_policyset(void);
+int32_t nstimer_get_lifetime(uint32_t cur_time, uint32_t timeout, uint32_t timestamp);
 
 
 /* -------------------------------- */
@@ -91,7 +85,7 @@ int32_t smgr_add_session(smgr_t *smgr, session_t *si)
 	session_insert(smgr->stab, si);
 	nstimer_insert(&si->timer, 10);
 
-	dbg(2, "Add a new session: si=0x%p, refcnt=%d", si, atomic_read(&si->refcnt));
+	dbg(5, "Add a new session: si=0x%p, refcnt=%d", si, atomic_read(&si->refcnt));
 
 	return 0;
 }
@@ -100,7 +94,7 @@ int32_t smgr_delete_session(session_t *si, uint32_t flags)
 {
 	ENT_FUNC(3);
 
-	dbg(2, "Delete old session: si=0x%p, refcnt=%d", si, atomic_read(&si->refcnt));
+	dbg(5, "Delete old session: si=0x%p, refcnt=%d", si, atomic_read(&si->refcnt));
 
 	if (flags & SMGR_DEL_SAVE_LOG) {
 		// 세션 종료시 INFO 로그도 같이 남김 (통계에서 사용)
@@ -123,6 +117,57 @@ int32_t smgr_delete_session(session_t *si, uint32_t flags)
 	return 0;
 }
 
+int32_t smgr_delete_by_ip(ip_t ip, int32_t kind)
+{
+	session_t *si = NULL, *n;
+	ip_t	*cmp_ip;
+	int32_t del_cnt = 0;
+
+START:
+	ns_rw_lock_irq(&g_smgr->smgr_lock) {
+
+		list_for_each_entry_safe(si, n, &g_smgr->all_slist, alist) {
+
+			switch (kind) {
+			default:
+			case SMGR_DEL_SKEY_SRC:
+				cmp_ip = &si->skey.src;
+				break;
+
+			case SMGR_DEL_SKEY_DST:
+				cmp_ip = &si->skey.dst;
+				break;
+
+			case SMGR_DEL_SNAT:
+				cmp_ip = &si->natinfo.ip[0];
+				break;
+
+			case SMGR_DEL_DNAT:
+				cmp_ip = &si->natinfo.ip[1];
+				break;
+
+			}
+
+			if (ip == *cmp_ip) {
+				del_cnt++;
+				// 지울 세션은 6초(DSYNC를 위한 5초 + 1)후 삭제 된다.
+				// DSYNC가 동작하는 경우 싱크가 이루어져서 삭제 된다.
+				//lft_change_timeout(&si->lft, 6);
+
+				// 그러나 패킷이 계속 들어 오는 경우 세션이 계속 살아 있게 된다.
+				// 그래서 바로 지워야 한다.
+				// unlock없이 호출하면 deadlock이다.
+				ns_rw_unlock_irq(&g_smgr->smgr_lock);
+				smgr_delete_session(si, 0);
+				goto START;
+			}
+		}
+
+	} ns_rw_unlock_irq(&g_smgr->smgr_lock);
+
+	return del_cnt;
+}
+
 int32_t smgr_setup_session_info(char* arg)
 {
 	int32_t ret=0;
@@ -140,8 +185,10 @@ int32_t smgr_setup_session_info(char* arg)
 	if (max_cnt > 0) {
 		list_for_each_entry_safe(si, n, &g_smgr->all_slist, alist) {
 			ioctl_session_t *s = &user_sinfo->sess[scnt];
-			sk_t *dsk = &s->sk;
-			sk_t *ssk = &si->sk;
+			uint32_t ctime = nstimer_get_time();
+
+			skey_t *dsk = &s->skey;
+			skey_t *ssk = &si->skey;
 
 			dsk->src = ssk->src;
 			dsk->dst = ssk->dst;
@@ -151,10 +198,9 @@ int32_t smgr_setup_session_info(char* arg)
 
 			s->sid = si->sid;
 			s->born_time = si->born_time;
-			s->timeout = si->timer.timeout;
+			s->timeout = nstimer_get_lifetime(ctime, si->timer.timeout, si->timer.timestamp);
 
-			s->fwpolicy_id = si->fwpolicy_id;
-			s->fwpolicy_idx = si->fwpolicy_idx;
+			s->fwpolicy_id = si->mp_fw.policy ? si->mp_fw.policy->rule_id : 0;
 
 			scnt ++;
 
@@ -198,76 +244,106 @@ int32_t smgr_slow_main(ns_task_t *nstask)
 {
 	smgr_t *smgr = g_smgr;
 	session_t *si = NULL;
-	fw_policy_t *fwp;
-	policyset_t* ps = NULL;
+	fw_policy_t *fwp=NULL, *natp=NULL;
+	policyset_t *fwps=NULL, *natps = NULL;
 	int32_t ret = NS_DROP;
 
 	ENT_FUNC(3);
 
-	ps = pmgr_get_policyset();
-	if (!ps) {
-		dbg(0, "No Policy !");
+	// for Firewall
+	fwps = pmgr_get_firewall_policyset();
+	fwp = nstask->mp_fw.policy;
+	if (fwps != nstask->mp_fw.policy_set) {
+
+		if (fwps) {
+			pmgr_policyset_release(fwps);
+		}
+
 		return NS_DROP;
 	}
 
-	if (ps->version != nstask->matched_fwpolicy_ver) {
-		ns_log("something worng now !!");
-		// XXX: todo something
+	dbg(5, "Firewall Rule Info: desc=%s, action=0x%llx", fwp->desc, fwp->action);
 
-		goto END;
-	}
+	natp = nstask->mp_nat.policy;
+	if (natp) {
+		natps = pmgr_get_nat_policyset();
+		if (natps != nstask->mp_nat.policy_set) {
+			if (natps) {
+				pmgr_policyset_release(natps);
+			}
 
-	fwp = pmgr_get_fw_policy(ps, nstask->matched_fwpolicy_idx);
-
-	if (fwp == NULL) {
-		dbg(0, "Invalid ruleid: %d", nstask->matched_fwpolicy_idx);
-		goto END;
-	}
-
-	dbg(0, "Rule Info: desc=%s, action=%llu", fwp->desc, fwp->action);
-
-	if (!fwp->action) {
-		dbg(5, "Drop rule: %d", nstask->matched_fwpolicy_idx);
-		goto END;
+			natp = NULL;
+			natps = NULL;
+		}
+		else {
+			dbg(5, "NAT Rule Info: desc=%s, action=0x%llx", natp->desc, natp->action);
+		}
 	}
 
 	si = session_alloc();
 	if (si == NULL) {
 		dbg(5, "Cannot add a new session");
-		goto END;
+		goto ERR;
 	}
 
-	memcpy(&si->sk, &nstask->key, sizeof(sk_t));
+	memcpy(&si->skey, &nstask->skey, sizeof(skey_t));
 
 	si->sid = smgr_get_next_sid();
 	si->born_time = nstimer_get_time();
-	//si->timeout = fwp->timeout;
+	//si->timeout = policy->timeout;
 	si->timeout = -1; 	// to use system default value
-	si->fwpolicy_idx = nstask->matched_fwpolicy_idx;
-	si->fwpolicy_ver = ps->version;
+	si->action = fwp->action;
+
+	memcpy(&si->mp_fw, &nstask->mp_fw, sizeof(mpolicy_t));
+	// XXX: no need to increase refcnt because nstask already had
+	//pmgr_policyset_hold(fwps);
+
+	if (natp) {
+		if (nat_bind_info(si, natp, nstask->skey.inic)) {
+			goto ERR;
+		}
+
+		si->action |= natp->action;
+		memcpy(&si->mp_nat, &nstask->mp_nat, sizeof(mpolicy_t));
+		// XXX: no need to increase refcnt because nstask already had
+		//pmgr_policyset_hold(natps);
+	}
 
 	smgr_add_session(smgr, si);
 
 	nstask->si = si;
 	session_hold(si);
-	
-	if (nstask->key.proto == IPPROTO_TCP) {
+
+	// 최초에 만들어 진 세션은 정방향 처리 한다.
+	nstask->flags |= TASK_FLAG_REQ;
+
+	// 새로운 세션 이다.
+	nstask->flags |= TASK_FLAG_NEW_SESS;
+
+	if (nstask->skey.proto == IPPROTO_TCP) {
 		tcp_init_seq(nstask);
 	}
 
 	smgr_post_main(nstask);
 
-	// call smgr_timeout()
-	append_cmd(nstask, smgr_timeout);
-
 	ret = NS_ACCEPT;
 
-END:
-	if (ps) {
-		pmgr_policyset_release(ps);
+	return ret;
+
+ERR:
+	if (fwps) {
+		pmgr_policyset_release(fwps);
 	}
 
-	return ret;
+	if (natps) {
+		pmgr_policyset_release(natps);
+	}
+
+	if (si) {
+		session_free(si);
+	}
+
+	return NS_DROP;
 }
 
 int32_t smgr_timeout(ns_task_t *nstask)
@@ -416,24 +492,26 @@ int32_t smgr_fast_main(ns_task_t *nstask)
 
 	ret = NS_ACCEPT;
 
-	nstask->key.hashkey = session_make_hash(&nstask->key);
+	nstask->skey.hashkey = session_make_hash(&nstask->skey);
 
-	dbg(5, "Hashkey: 0x%x", nstask->key.hashkey);
-	DBGKEY(3, "TASK_KEY", &nstask->key);
+	dbg(0, "Hashkey: 0x%x", nstask->skey.hashkey);
+	DBGKEY(0, "TASK_KEY", &nstask->skey);
 
-	nstask->si = session_search(g_smgr->stab, &nstask->key);
+	nstask->si = session_search(g_smgr->stab, &nstask->skey);
 
 	if (nstask->si == NULL) {
-		dbg(5, "***** Begin Slow Path *****");
+		dbg(0, "-----+ Begin Slow Path +-----");
 		// call pmgr_main()
 		append_cmd(nstask, pmgr);
 	}
 	else {
-		dbg(5, "***** Begin Fast Path *****");
+		dbg(0, "++++++ Begin Fast Path ++++++");
+
+		if (!(nstask->skey.flags & SKF_REVERSE_MATCHED)) {
+			nstask->flags |= TASK_FLAG_REQ;
+		}
 
 		smgr_post_main(nstask);
-		// call smgr_timeout()
-		append_cmd(nstask, smgr_timeout);
 	}
 
 	return ret;
@@ -441,6 +519,15 @@ int32_t smgr_fast_main(ns_task_t *nstask)
 
 int32_t smgr_post_main(ns_task_t *nstask)
 {
+	session_t *si = nstask->si;
+
+	// call smgr_timeout()
+	append_cmd(nstask, smgr_timeout);
+
+	if (si->action & ACT_NAT) {
+		// call nat_main()
+		append_cmd(nstask, nat);
+	}
 
 	return NS_ACCEPT;
 }

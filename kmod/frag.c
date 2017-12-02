@@ -1,17 +1,15 @@
 #include <net/protocol.h>
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <skey.h>
-#include <timer.h>
-#include <session.h>
+#include <typedefs.h>
 #include <ns_task.h>
 #include <ns_macro.h>
-#include <commands.h>
-#include <log.h>
-#include <extern.h>
-#include <version.h>
-#include <misc.h>
+
+//#include <commands.h>
+//#include <log.h>
+//#include <extern.h>
+//#include <version.h>
+//#include <misc.h>
 
 
 //////////////////////////////////////////////////////
@@ -56,7 +54,7 @@ int32_t ns_keep_frag4(ns_task_t *nstask)
 		}
 	}
 
-	FUNC_TEST_MSG(4, "Receive a fragment packet:frag offset=%d, flags=0x%x", offset, flags);
+	dbg(4, "Receive a fragment packet:frag offset=%d, flags=0x%x", offset, flags);
 
 	// check minimal size of ip fragmentation pkt
 	if (OPT_VAL(frag_pkt_min_len) &&
@@ -112,7 +110,7 @@ int32_t frag_main(ns_task_t *nstask)
 
 	// 패킷은 조합 되어서 완성된 패킷으로 반환 된다.
 	// 이 부분 이후 부터는 frag 패킷이 전혀 없다.
-	FUNC_TEST_MSG(4, "Check fragment packet");
+	dbg(4, "Check fragment packet");
 	iph = ns_iph(skb);
 
 	if (!(iph->frag_off & htons(IP_MF | IP_OFFSET))) {

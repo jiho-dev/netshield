@@ -1,17 +1,11 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
+#include <typedefs.h>
+#include <ns_macro.h>
 #include <session.h>
 #include <ns_task.h>
-#include <ns_macro.h>
 #include <log.h>
-#include <extern.h>
-#include <version.h>
 #include <misc.h>
-#include <smgr.h>
-#include <options.h>
 #include <khypersplit.h>
 #include <ns_malloc.h>
 #include <pmgr.h>
@@ -442,7 +436,7 @@ uint32_t hypersplit_search(hypersplit_t *hs, pktinfo_t *pkt)
 	const struct hs_node *node, *root_node;
 
 	if (hs == NULL) {
-		return -1;
+		return HS_NO_RULE;
 	}
 
 	offset = hs->def_rule + 1;
@@ -469,11 +463,9 @@ uint32_t hypersplit_search(hypersplit_t *hs, pktinfo_t *pkt)
 		}
 	}
 
-#if 0
 	if (pri == hs->def_rule) {
-		return -1;
+		return HS_NO_RULE;
 	}
-#endif
 
 	return pri;
 }

@@ -12,22 +12,29 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
-#include <ns_type_defs.h>
+#include <typedefs.h>
 #include <ioctl_policy.h>
 #include <fw_policy.h>
 #include <timer.h>
 #include <skey.h>
 #include <session.h>
 #include <ioctl_session.h>
+#include <nat.h>
+#include <action.h>
 
 //#include <rule_trace.h>
 #include <hypersplit.h>
 #include <rfg.h>
 
+#include <parse_policy_json.h>
 
-#define APPLY_KERNEL 0x01
-#define SHOW_SESSION 0x02
+#define APPLY_FIREWALL 	0x01
+#define APPLY_NAT 	 	0x02
+#define SHOW_SESSION 	0x04
 
 struct arg_opts {
 	char	*s_rule_file;
@@ -58,6 +65,16 @@ enum {
 #else
 #error Not defined Endian Mode !
 #endif
+
+////////////////////////////////////////
+
+
+int send_to_kernel(fw_policy_t *fwp, int num, hypersplit_t *hs, int is_nat);
+int parse_policy_json(policy_json_t *p, char *fname);
+int get_session(void);
+int apply_json_rule(fw_policy_t *fwp, int num, int is_nat);
+int free_policy_json(policy_json_t *p);
+
 ////////////////////////////////////////
 
 static void print_help(void)
@@ -67,7 +84,8 @@ static void print_help(void)
 		"\n"
 		"Valid options:\n"
 		"  -r, --rule FILE  specify a rule file for building\n"
-		"  -k, --kernel send rule to kernel\n"
+		"  -f, --firewall apply firewall rule to kernel\n"
+		"  -n, --nat apply nat rule to kernel\n"
 		"  -s, --session show session \n"
 		"\n"
 		"  -h, --help  display this help and exit\n"
@@ -81,10 +99,11 @@ static void print_help(void)
 static void parse_args(struct arg_opts *argopts, int argc, char *argv[])
 {
 	int option;
-	const char *s_opts = "r:hks";
+	const char *s_opts = "r:hfns";
 	const struct option opts[] = {
 		{ "rule",	 required_argument, NULL, 'r' },
-		{ "kernel",	 no_argument,		NULL, 'k' },
+		{ "firewall",no_argument,		NULL, 'f' },
+		{ "nat",	 no_argument,		NULL, 'n' },
 		{ "session", no_argument,		NULL, 's' },
 		{ "help",	 no_argument,		NULL, 'h' },
 		{ NULL,		 0,					NULL, 0	  }
@@ -108,8 +127,12 @@ static void parse_args(struct arg_opts *argopts, int argc, char *argv[])
 			argopts->s_rule_file = optarg;
 			break;
 
-		case 'k':
-			argopts->flags |= APPLY_KERNEL;
+		case 'f':
+			argopts->flags |= APPLY_FIREWALL;
+			break;
+
+		case 'n':
+			argopts->flags |= APPLY_NAT;
 			break;
 
 		case 's':
@@ -127,167 +150,10 @@ static void parse_args(struct arg_opts *argopts, int argc, char *argv[])
 	}
 }
 
-static uint64_t make_timediff(const struct timespec stop,
-							  const struct timespec start)
-{
-	return (stop.tv_sec * 1000000ULL + stop.tv_nsec / 1000)
-		   - (start.tv_sec * 1000000ULL + start.tv_nsec / 1000);
-}
-
-void save_hypersplit(hypersplit_t *hypersplit)
-{
-	int fd;
-
-	fd = open("hs.bin", O_WRONLY | O_TRUNC | O_CREAT, 0644);
-
-	if (fd == -1) {
-		printf("cannot open hs.bin \n");
-		return;
-	}
-
-	ssize_t l = 0;
-
-	l = write(fd, &hypersplit->tree_num, sizeof(int));
-	l = write(fd, &hypersplit->def_rule, sizeof(int));
-
-	if (l == 0) {
-	}
-
-	printf("Saving Hypersplit \n");
-	printf("Num Tree: %d \n", hypersplit->tree_num);
-	printf("Def Rule: %d \n", hypersplit->def_rule);
-
-	int j, tmem = 0, tnode = 0;
-
-	for (j = 0; j < hypersplit->tree_num; j++) {
-		struct hs_tree *t = &hypersplit->trees[j];
-		int mlen = t->inode_num * sizeof(struct hs_node);
-
-		tmem += mlen;
-		tnode += t->inode_num;
-
-		printf("#%d Tree: Node=%-5d, Mem=%-7d Bytes, Maxdepth=%d \n",
-			   j + 1, t->inode_num, mlen, t->depth_max);
-
-		l = write(fd, &t->inode_num, sizeof(int));
-		l = write(fd, &t->depth_max, sizeof(int));
-		l = write(fd, &mlen, sizeof(int));
-		l = write(fd, (void *)t->root_node, mlen);
-	}
-
-	close(fd);
-
-	printf("Total: Node=%d, Mem=%d \n", tnode, tmem);
-}
-
-void* load_hypersplit(void)
-{
-	int fd;
-	struct hypersplit_s *hs;
-	ssize_t l = 0;
-
-	l = sizeof(struct hypersplit_s);
-	hs = malloc(l);
-
-	if (hs == NULL) {
-		return NULL;
-	}
-
-	memset(hs, 0, l);
-
-	fd = open("hs.bin", O_RDONLY);
-
-	if (fd == -1) {
-		printf("cannot open hs.bin \n");
-		return NULL;
-	}
-
-	read(fd, &hs->tree_num, sizeof(int));
-	read(fd, &hs->def_rule, sizeof(int));
-
-	printf("Loading Hypersplit \n");
-	printf("Num Tree: %d \n", hs->tree_num);
-	printf("Def Rule: %d \n", hs->def_rule);
-
-	hs->trees = malloc(sizeof(struct hs_tree) * hs->tree_num);
-
-	int j, tmem = 0, tnode = 0;
-
-	for (j = 0; j < hs->tree_num; j++) {
-		struct hs_tree *t = &hs->trees[j];
-		int mlen;
-
-		read(fd, &t->inode_num, sizeof(int));
-		t->enode_num = t->inode_num + 1;
-
-		read(fd, &t->depth_max, sizeof(int));
-		read(fd, &mlen, sizeof(int));
-
-		tnode += t->inode_num;
-		tmem += mlen;
-
-		if ((t->inode_num * sizeof(struct hs_node)) != mlen) {
-			printf("something wrong: mlen=%d \n", mlen);
-		}
-
-		t->root_node = malloc(mlen);
-
-		read(fd, (void *)t->root_node, mlen);
-
-		printf("#%d Tree: Node=%-5d, Mem=%-7d Bytes, Maxdepth=%d \n",
-			   j + 1, t->inode_num, mlen, t->depth_max);
-	}
-
-	close(fd);
-
-	printf("Total: Node=%d, Mem=%d \n", tnode, tmem);
-
-	return hs;
-}
-
 ////////////////////////////////////////////////
 
-int get_netshield_option_int(char *name)
-{
-	char buf[32] = { 0x0 };
-	int value = 0;
-	char proc[512];
-	FILE *fd;
-
-	sprintf(proc, "/proc/netshield/option/%s", name);
-
-	fd = fopen(proc, "r");
-
-	if (fd) {
-		fgets(buf, 32, fd);
-		value = atoi(buf);
-
-		fclose(fd);
-	}
-
-	return value;
-}
-
-void get_netshield_option_str(char *name, char *msg, int msglen)
-{
-	char proc[512];
-	FILE *fd;
-
-	sprintf(proc, "/proc/netshield/option/%s", name);
-
-	fd = fopen(proc, "r");
-
-	if (fd && msg && msglen > 0) {
-		fgets(msg, msglen, fd);
-	}
-
-	if (fd) {
-		fclose(fd);
-	}
-}
-
-fw_policy_t* convert_fw_policy(struct partition			*pa,
-							   struct ioctl_policyset_s *ps)
+#if 0
+fw_policy_t* convert_fw_policy(struct partition			*pa, int is_nat)
 {
 	int i = 0, j = 0;
 	int l = 0;
@@ -339,9 +205,39 @@ fw_policy_t* convert_fw_policy(struct partition			*pa,
 			f->range.proto.min = r->dims[DIM_PROTO][0];
 			f->range.proto.max = r->dims[DIM_PROTO][1];
 
-			if (r->flags) {
+			f->range.nic.min = r->dims[DIM_NIC][0];
+			f->range.nic.max = r->dims[DIM_NIC][1];
+			f->action = 0;
+			f->nat_policy[0] = NULL;
+			f->nat_policy[1] = NULL;
+
+			if (r->flags & RULE_ALLOW) {
 				// for allow
-				f->action |= 0x01;
+				f->action |= ACT_ALLOW;
+				printf("Firewall action: 0x%lx \n", f->action);
+			}
+			else if (r->flags & RULE_SNAT) {
+				// for SNAT
+				f->action |= ACT_SNAT;
+				printf("SNAT action: 0x%lx \n", f->action);
+			}
+			else {
+				printf("No action: flags=0x%x \n", r->flags);
+			}
+			
+			if (is_nat) {
+				nat_policy_t *n = malloc(sizeof(nat_policy_t));
+
+				memset(n, 0, sizeof(nat_policy_t));
+				n->id = 1;
+				n->flags = NATF_SNAT_NAPT;
+				n->nic = 0;
+				n->nip[0] = ntohl(inet_addr("1.1.1.3"));
+				n->nip[1] = n->nip[0];
+				n->nport[0] = 3000;
+				n->nport[1] = 65535;
+
+				f->nat_policy[0] = n;
 			}
 
 			l = strlen(r->desc);
@@ -354,142 +250,16 @@ fw_policy_t* convert_fw_policy(struct partition			*pa,
 	return fw;
 }
 
-int send_to_kernel(struct partition *pa, hypersplit_t *hs)
+
+int apply_kernel(struct partition *pa, hypersplit_t *hs, int is_nat)
 {
-	int fd, ret;
-	struct ioctl_policyset_s ps;
-	uint32_t tnode = 0;
-	uint32_t tmem = 0;
+	fw_policy_t *fwp;
 
-	ps.fw_policy = convert_fw_policy(pa, &ps);
-	ps.num_fw_policy = pa->rule_num;
+	fwp = convert_fw_policy(pa, is_nat);
 
-	tmem = hs_tree_memory_size(hs, &tnode);
-	ps.hs = hs;
-	ps.num_hs_tree = hs->tree_num;
-	ps.num_hs_node = tnode;
-	ps.num_hs_mem = tmem;
-
-	printf("===== HyperSplit Info ===== \n");
-	printf("Total Tree: %d \n", hs->tree_num);
-	printf("Total Node: %d \n", tnode);
-	printf("Total Mem : %d \n", tmem);
-
-#if 0
-	int i;
-	for (i = 0; i < hs->tree_num; i++) {
-		int j, l;
-		struct hs_tree *t = &hs->trees[i];
-		uint8_t *p;
-
-		l = sizeof(struct hs_node) * t->inode_num;
-		p = (uint8_t *)t->root_node;
-
-		printf("Tree %d: %p \n", i + 1, t);
-		printf(" root_node: %p \n", t->root_node);
-		printf(" inode_num: %d \n", t->inode_num);
-		printf(" enode_num: %d \n", t->enode_num);
-		printf(" depth_max: %d \n", t->depth_max);
-		printf(" node len: %d \n", l);
-
-		if (1) {
-			char buf[100], b[10];
-
-			memset(buf, 0, 100);
-
-			for (j = 0; j < l; j++) {
-				sprintf(b, "0x%02x ", p[j]);
-				strcat(buf, b);
-
-				if (j > 0 && (j % 8) == 7) {
-					printf("%s\n", buf);
-					memset(buf, 0, 100);
-				}
-			}
-
-			printf("\n");
-		}
-	}
-#endif
-
-	fd = open(DEVICE, O_RDWR);
-	if (fd == -1) {
-		printf("File %s either does not exist or has been locked by another process\n", DEVICE);
-		return -1;
-	}
-
-	ret = ioctl(fd, IOCTL_APPLY_FW_POLICY, (unsigned long)&ps);
-
-	printf("Return of Apply: %d \n", ret);
-
-#if 0
-	if (ret == 0) {
-		ioctl(fd, IOCTL_COMMIT_NEW_POLICY, (unsigned long)hs);
-		printf("Commit New Policy\n");
-	}
-#endif
-
-	close(fd);
+	send_to_kernel(fwp, pa->rule_num, hs, is_nat);
 
 	return 0;
-}
-
-int get_session(void)
-{
-	ioctl_get_sess_t ss;
-	int fd = -1, ret = 0;
-	int l, i;
-	int sess_cnt = 0;
-
-	sess_cnt = get_netshield_option_int("session_cnt");
-
-	if (sess_cnt < 1) {
-		printf("No Session\n");
-		return 0;
-	}
-
-	fd = open(DEVICE, O_RDWR);
-	if (fd == -1) {
-		printf("File %s either does not exist or has been locked by another process\n", DEVICE);
-		return -1;
-	}
-
-	ss.num_sess = sess_cnt;
-	l = sizeof(ioctl_session_t) * sess_cnt;
-
-	ss.sess = malloc(l);
-
-	if (ss.sess == NULL) {
-		printf("No memory for session \n");
-		goto END;
-	}
-
-	ret = ioctl(fd, IOCTL_SESSION_INFO, (unsigned long)&ss);
-
-	if (ret == 0) {
-		printf("# of Session: %u \n", ss.num_sess);
-		for (i = 0; i < ss.num_sess; i++) {
-			ioctl_session_t *s = &ss.sess[i];
-
-			printf("%3d:" IP_FMT ":%-5u -> " IP_FMT ":%-5u(%-2u) sid=%u, born=%u, timeout=%d \n",
-				   i,
-				   IPH(s->sk.src), s->sk.sp,
-				   IPH(s->sk.dst), s->sk.dp, s->sk.proto,
-				   s->sid,
-				   s->born_time,
-				   s->timeout
-				   );
-		}
-	}
-
-	if (ss.sess) {
-		free(ss.sess);
-	}
-
-END:
-	close(fd);
-
-	return ret;
 }
 
 int apply_rule(struct arg_opts *argopts)
@@ -559,9 +329,13 @@ int apply_rule(struct arg_opts *argopts)
 	printf("Time for building: %" PRIu64 "(us)\n",
 		   make_timediff(stoptime, starttime));
 
-	if (argopts->flags & APPLY_KERNEL) {
-		printf("Apply Hypersplit into NetShield: %s \n", argopts->s_rule_file);
-		send_to_kernel(&pa, &hypersplit);
+	if (argopts->flags & APPLY_FIREWALL) {
+		printf("Apply Firewall rules into NetShield: %s \n", argopts->s_rule_file);
+		apply_kernel(&pa, &hypersplit, 0);
+	}
+	else if (argopts->flags & APPLY_NAT) {
+		printf("Apply NAT rules into NetShield: %s \n", argopts->s_rule_file);
+		apply_kernel(&pa, &hypersplit, 1);
 	}
 
 	unload_partition(&pa);
@@ -569,6 +343,7 @@ int apply_rule(struct arg_opts *argopts)
 
 	return 0;
 }
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -587,7 +362,25 @@ int main(int argc, char *argv[])
 	}
 
 	if (argopts.s_rule_file != NULL) {
-		apply_rule(&argopts);
+		policy_json_t p;
+		memset(&p, 0, sizeof(policy_json_t));
+
+		parse_policy_json(&p, argopts.s_rule_file);
+		if (p.policy[0]) {
+			if (argopts.flags & APPLY_FIREWALL) {
+				apply_json_rule(p.policy[0], p.num_policy[0], 0);
+			}
+		}
+
+		if (p.policy[1]) {
+			if (argopts.flags & APPLY_NAT) {
+				apply_json_rule(p.policy[1], p.num_policy[1], 1);
+			}
+		}
+
+		free_policy_json(&p);
+
+		//apply_rule(&argopts);
 	}
 
 	return 0;

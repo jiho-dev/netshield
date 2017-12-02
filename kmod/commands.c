@@ -1,12 +1,8 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
-#include <session.h>
-#include <smgr.h>
-#include <ns_task.h>
+#include <typedefs.h>
 #include <ns_macro.h>
+#include <session.h>
 #include <commands.h>
 #include <log.h>
 #include <extern.h>
@@ -16,7 +12,10 @@
 #include <options.h>
 #include <khypersplit.h>
 #include <pmgr.h>
+#include <smgr.h>
 #include <ns_ioctl.h>
+#include <nat.h>
+#include <arp_proxy.h>
 
 
 //////////////////////////////////////////////////////
@@ -47,6 +46,8 @@ nscmd_module_t nscmd_module_list[] __read_mostly =
 	CMD_ITEM(smgr_slow, SMGR_SLOW,  smgr_slow_main,    	NULL,    		       NULL,     NULL),
 	CMD_ITEM(smgr_timeout,SMGR_TIMEOUT,smgr_timeout,    NULL,               NULL,           NULL),
 	CMD_ITEM(pmgr, 		PMGR_MAIN, 	pmgr_main,         pmgr_init,           pmgr_clean,     NULL),
+	CMD_ITEM(nat,        NAT,         nat_main,          NULL,               NULL,          NULL),
+	CMD_ITEM(arpp,       ARPP,        NULL,          	arpp_init,           arpp_clean,    NULL),
 
 	[NS_CMD_MAX] = {.name=NULL, .short_name= NULL, .run=NULL, .init=NULL, .clean=NULL, .age=NULL}
 
@@ -97,7 +98,7 @@ nscmd_module_t* nscmd_pop(nscmd_t* c)
 	uint8_t cmd;
 
 	if (c->head == c->tail) {
-		DBG(4, "The NetShield cmd stack is empty. head=%d, tail=%d", c->head, c->tail);
+		dbg(4, "The NetShield cmd stack is empty. head=%d, tail=%d", c->head, c->tail);
 		return NULL;
 	}
 
@@ -151,7 +152,7 @@ int32_t nscmd_run_command(ns_task_t *nstask)
 	ENT_FUNC(3);
 
 	while ((cmd = nscmd_pop(&nstask->cmd)) != NULL) {
-		DBG(5, "Run module: %s", cmd->name);
+		dbg(5, "Run module: %s", cmd->name);
 
 		if (cmd->run == NULL) {
 			continue;
@@ -163,26 +164,24 @@ int32_t nscmd_run_command(ns_task_t *nstask)
 			continue;
 		}
 		else if (ret == NS_QUEUE) {
-			// ns_task_t is stored into wait_list by wthread
-			FUNC_TEST_MSG(4, "Queued by : %s", cmd->name);
-
+			dbg(5, "Queued by : %s", cmd->name);
 			break;
 		}
 		else if (ret == NS_STOLEN) {
-			// error or something
-			DBG(5, "Stolen by : %s", cmd->name);
+			dbg(5, "Stolen by : %s", cmd->name);
 			break;
 		}
 		else if (ret == NS_DROP || ret == NS_DEL_SESSION) {
-			FUNC_TEST_MSG(4, "Droped by : %s", cmd->name);
+			dbg(5, "Droped by : %s", cmd->name);
 			break;
 		}
 		else if (ret == NS_STOP) {
+			dbg(5, "Stop by : %s", cmd->name);
 			ret = NS_ACCEPT;
 			break;
 		}
 		else {
-			DBG(0, "Unknown result : module=%s, ret=%d", cmd->name, ret);
+			dbg(0, "Unknown result : module=%s, ret=%d", cmd->name, ret);
 		}
 	}
 
@@ -203,6 +202,14 @@ int32_t nscmd_run_command(ns_task_t *nstask)
 	if (likely(nstask->si)) {
 		session_release(nstask->si);
 		nstask->si = NULL;
+	}
+
+	if (nstask->mp_fw.policy_set) {
+		pmgr_policyset_release(nstask->mp_fw.policy_set);
+	}
+
+	if (nstask->mp_nat.policy_set) {
+		pmgr_policyset_release(nstask->mp_nat.policy_set);
 	}
 
 	if (ret == NS_DEL_SESSION) {

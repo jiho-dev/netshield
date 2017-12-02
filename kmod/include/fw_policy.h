@@ -1,6 +1,8 @@
 #ifndef __FW_POLICY_H__
 #define __FW_POLICY_H__
 
+#include <action.h>
+#include <nat.h>
 
 //
 // Firewall Policy
@@ -8,6 +10,10 @@
 typedef struct range128_s {
 	uint128_t min, max;
 } range128_t;
+
+typedef struct range32_s {
+	uint32_t min, max;
+} range32_t;
 
 typedef struct range16_s {
 	uint16_t min, max;
@@ -22,13 +28,16 @@ typedef struct range_s {
 	range128_t 	dst;
 	range16_t 	sp;
 	range16_t 	dp;
+	range32_t 	nic;
 	range8_t 	proto;
 } range_t;
 
+#if 0
 typedef struct policyid_s {
 	uint32_t owner_id;
 	uint32_t id;
 } policyid_t;
+#endif
 
 /// 방화벽 정책 구조체
 typedef struct fw_policy_s {
@@ -51,8 +60,8 @@ typedef struct fw_policy_s {
 	uint64_t	action; 			///< see ACT_*
 	uint32_t 	act_log_time;		///< logging action time, if action includes ACT_LOG_*
 	range_t		range; 				///< range data
+	nat_policy_t *nat_policy[2];	///< 0: Single NAT rule, 1: Both NAT rule
 #if 0
-	natr_t		*nat_info[2];		///< 0: Single NAT rule, 1: Dual NAT rule
 	timerr_t	*time_info; 		///< Timer rule info
 #endif
 
@@ -60,7 +69,7 @@ typedef struct fw_policy_s {
 	uint32_t 	max_pps[2];			///< 0: RES, 1: REQ
 	uint32_t 	max_cps;
 
-} fw_policy_t;
+} __attribute__((packed, aligned(4))) fw_policy_t;
 
 
 #endif

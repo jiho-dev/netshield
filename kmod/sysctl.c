@@ -1,6 +1,6 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
+#include <typedefs.h>
 #include <ns_macro.h>
 #include <ns_sysctl.h>
 #include <log.h>

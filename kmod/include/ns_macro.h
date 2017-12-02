@@ -120,6 +120,7 @@
 
 extern int32_t dbgctl_compare_level(int32_t file_level, char* func, int32_t f_level);
 extern void _dump_hex(const uint8_t *data, int len);
+extern void dump_pkt(char* func, int32_t line, iph_t *iph, uint8_t inic);
 
 #define ns_err(fmt, args...) 	ns_log_print(-1, LOG_LEV_ERR, "NetShield ERR: " NS_FUNC_FMT fmt, NS_FUNC_PARAM, ##args)
 #define ns_warn(fmt, args...) 	ns_log_print(-1, LOG_LEV_WARN, "NetShield WARN: " NS_FUNC_FMT fmt, NS_FUNC_PARAM, ##args)
@@ -149,7 +150,7 @@ extern void _dump_hex(const uint8_t *data, int len);
 
 #define	_DBGKEY(n, l, msg, _kkk) 	\
 	if (CMP_LEV(DBG_NAME(n),l)) {	\
-		sk_t* _k = _kkk;  			\
+		skey_t* _k = _kkk;  			\
 		uint32_t _ss = (uint32_t)_k->src; \
 		uint32_t _dd = (uint32_t)_k->dst; \
 		OUT_MSG(__STR(msg) SKEY_FMT, IPH(_ss), _k->sp, \
@@ -159,7 +160,7 @@ extern void _dump_hex(const uint8_t *data, int len);
 
 #define	_DBGKEY6(n, l, msg, _kkk) 	\
 	if (CMP_LEV(DBG_NAME(n),l)) {	\
-		sk_t* _k = _kkk; ip6_t _s, _d;\
+		skey_t* _k = _kkk; ip6_t _s, _d;\
 		_s.a64[0] = htonll(_k->src6.a64[0]); \
 		_s.a64[1] = htonll(_k->src6.a64[1]); \
 		_d.a64[0] = htonll(_k->dst6.a64[0]); \
@@ -204,8 +205,6 @@ extern void _dump_hex(const uint8_t *data, int len);
 
 
 #else
-
-
 
 #define DECLARE_DBG_LEVEL(x)
 #define OUT_MSG(fmt, args... )

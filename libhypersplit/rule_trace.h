@@ -31,6 +31,7 @@
 	":%" SCNu32 ".%" SCNu32 ".%" SCNu32 ".%" SCNu32 \
 	")(%" SCNu32 ":%" SCNu32 \
 	")(%" SCNu32 ":%" SCNu32 \
+	")(%" SCNu32 ":%" SCNu32 \
 	")(%" SCNu32 ":%" SCNu32 ")(%c)(%[^\n]s)\n"
 
 #define WUSTL_PKT_FMT_SCN \
@@ -70,7 +71,8 @@ enum {
 	DIM_SPORT	= 2,
 	DIM_DPORT	= 3,
 	DIM_PROTO	= 4,
-	DIM_MAX		= 5
+	DIM_NIC		= 5,
+	DIM_MAX		= 6
 };
 
 enum {
@@ -83,6 +85,8 @@ enum {
 
 #define RULE_DROP 	0x0
 #define RULE_ALLOW 	0x1
+#define RULE_SNAT 	0x2
+#define RULE_DISABLE 0x4
 
 struct rule {
 	uint32_t	dims[DIM_MAX][2];

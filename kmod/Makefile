@@ -3,6 +3,8 @@ COMM_FILES= lkm.c main.c misc.c commands.c log.c frag.c sysctl.c
 COMM_FILES+=options.c session.c smgr.c parse_proto.c
 COMM_FILES+=cuckoo.c MurmurHash3.c pmgr.c
 COMM_FILES+=khypersplit.c ioctl.c fw_policy.c timer.c tcp_state.c
+COMM_FILES+=nat.c interval_tree.c
+COMM_FILES+=arp_proxy.c
 
 obj-m=netshield.o
 netshield-objs=$(patsubst %.c,/%.o,$(COMM_FILES)) 

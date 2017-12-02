@@ -1,26 +1,25 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <skey.h>
-#include <timer.h>
-#include <session.h>
+#include <typedefs.h>
 #include <ns_task.h>
 #include <ns_macro.h>
 #include <log.h>
 #include <misc.h>
+#include <parse_proto.h>
 
 //////////////////////////////////////////////////////
 
 DECLARE_DBG_LEVEL(2);
 
 uint16_t parse_ip_options(iph_t* iph);
+int32_t parse_tcp_options(ns_task_t* nstask);
 
 
 /* -------------------------------- */
 /*        Code 영역                 */
 /* -------------------------------- */
 
-int32_t build_skey(iph_t *iph, sk_t *key, int32_t *pkt_len, uint32_t *flags)
+int32_t build_skey(iph_t *iph, skey_t *skey, int32_t *pkt_len, uint32_t *flags)
 {
 	int32_t hlen = *pkt_len;
 	uint8_t *data = (uint8_t *)iph + hlen;
@@ -33,17 +32,17 @@ int32_t build_skey(iph_t *iph, sk_t *key, int32_t *pkt_len, uint32_t *flags)
 
 	// 패킷 정보를 이용해서 룰 검색 데이터를 만든다.
 	// 영역 검사 등 비교를 위해서는 host order로 저장 되어야 한다.
-	key->src = ntohl(iph->saddr);
-	key->dst = ntohl(iph->daddr);
-	key->proto = iph->protocol;
+	skey->src = ntohl(iph->saddr);
+	skey->dst = ntohl(iph->daddr);
+	skey->proto = iph->protocol;
 
 	switch (iph->protocol) {
 	case IPPROTO_UDP:
 		u = (uph_t *)data;
 		*pkt_len += sizeof(uph_t);
 
-		key->sp = ntohs(u->source);
-		key->dp = ntohs(u->dest);
+		skey->sp = ntohs(u->source);
+		skey->dp = ntohs(u->dest);
 
 		break;
 
@@ -51,8 +50,8 @@ int32_t build_skey(iph_t *iph, sk_t *key, int32_t *pkt_len, uint32_t *flags)
 		t = (tph_t *)data;
 		*pkt_len += sizeof(tph_t);
 
-		key->sp = ntohs(t->source);
-		key->dp = ntohs(t->dest);
+		skey->sp = ntohs(t->source);
+		skey->dp = ntohs(t->dest);
 
 		break;
 
@@ -78,13 +77,13 @@ int32_t build_skey(iph_t *iph, sk_t *key, int32_t *pkt_len, uint32_t *flags)
 			// icmp type
 			icmp_type[0] = ic->type;
 			icmp_type[1] = 0;
-			key->sp = 0;
+			skey->sp = 0;
 
 			switch (ic->type) {
 			case ICMP_ECHOREPLY:
 			case ICMP_ECHO:
 				// icmp id를 채운다.
-				key->sp = ntohs(ic->un.echo.id);
+				skey->sp = ntohs(ic->un.echo.id);
 				icmp_type[1] = ns_get_inv_icmp_type(ic->type, 0);
 				break;
 
@@ -123,14 +122,14 @@ int32_t build_skey(iph_t *iph, sk_t *key, int32_t *pkt_len, uint32_t *flags)
 				break;
 			}
 
-			key->dp = icmp_type[0] ^ icmp_type[1];
+			skey->dp = icmp_type[0] ^ icmp_type[1];
 		}
 		break;
 
 	default:
 		// 나머지 프로토콜은 src/dst ip만으로 구분한다.
-		key->sp = 0;
-		key->dp = 0;
+		skey->sp = 0;
+		skey->dp = 0;
 
 		break;
 	}
@@ -174,6 +173,7 @@ int32_t parse_inet_protocol(ns_task_t *nstask)
 	switch (iph->protocol) {
 		case IPPROTO_TCP:
 			nstask->l4_hlen = ns_tcph(nstask->pkt)->doff << 2;
+			parse_tcp_options(nstask);
 			break;
 
 		case IPPROTO_UDP:
@@ -208,13 +208,7 @@ int32_t parse_inet_protocol(ns_task_t *nstask)
 	nstask->l4_dlen = nstask->ip_dlen - nstask->l4_hlen;
 	nstask->l4_data = (char *)ns_raw(nstask->pkt) + nstask->l4_hlen;
 
-#if 0
-	if (iph->protocol == IPPROTO_TCP && parse_tcp_options(nstask)) {
-		return NS_DROP;
-	}
-#endif
-
-	FUNC_TEST_MSG(4, "Packet length info: ip_len=%d, ip_hlen=%d, ip_dlen=%d, l4_dlen=%d, l4_hlen=%d",
+	dbg(4, "Packet length info: ip_len=%d, ip_hlen=%d, ip_dlen=%d, l4_dlen=%d, l4_hlen=%d",
 			ns_iplen(nstask->pkt), nstask->ip_hlen, nstask->ip_dlen, nstask->l4_dlen, nstask->l4_hlen);
 
 	return NS_ACCEPT;
@@ -233,45 +227,51 @@ int32_t init_task_info(ns_task_t *nstask)
 	// 패킷 사이즈를 검사할 크기
 	pkt_len = nstask->ip_hlen;
 
-	ret = build_skey(iph, &nstask->key, &pkt_len, &nstask->flags);
+	ret = build_skey(iph, &nstask->skey, &pkt_len, &nstask->flags);
 
 	if (unlikely(ret == 0 && nstask->flags & TASK_FLAG_ICMPERR)) {
 		uint32_t f;
 		uint128_t swap_ip;
 		uint16_t swap_port;
 
-		FUNC_TEST_MSG(4, "build_skey for icmp error");
+		dbg(5, "build_skey for icmp error");
 
 		// icmp error 패킷에는 원본 패킷이 실려 있다.
 		iph = (iph_t *)(ns_raw(nstask->pkt) + sizeof(ich_t));
 
-		DUMP_PKT(4, iph, nstask->key.inic);
+		DUMP_PKT(4, iph, nstask->skey.inic);
 
 		// icmp error 패킷은 이후 모든 처리를 데이터 부분에 실려 있는 
 		// 패킷을 기준으로 처리 한다.
 		// nat 인 경우는 별도의 처리가 필요 하다.
 		pkt_len = nstask->ip_hlen;
-		ret = build_skey(iph, &nstask->key, &pkt_len, &f);
+		ret = build_skey(iph, &nstask->skey, &pkt_len, &f);
 
 		// 역방향 키를 찾기 위해서 키를 뒤집는다.
 		// 이때 NAT도 역방향 키가 검색 된다.
 
 		// swap ip
-		swap_ip = nstask->key.src;
-		nstask->key.src = nstask->key.dst;
-		nstask->key.dst = swap_ip;
+		swap_ip = nstask->skey.src;
+		nstask->skey.src = nstask->skey.dst;
+		nstask->skey.dst = swap_ip;
 
 		// swap port
-		swap_port = nstask->key.sp;
-		nstask->key.sp = nstask->key.dp;
-		nstask->key.dp = swap_port;
+		swap_port = nstask->skey.sp;
+		nstask->skey.sp = nstask->skey.dp;
+		nstask->skey.dp = swap_port;
+
+		DBGKEY(0, ICMP_ERR_KEY, &nstask->skey);
+	}
+	else {
+		//DBGKEY(0, NORMAL_KEY, &nstask->skey);
 	}
 
-	// for debugging
+#warning "Fixme: Testing code"
+	// FIXME: for Testing 
 	if (1) {
 		switch (iph->protocol) {
 		case IPPROTO_TCP:
-			if (nstask->key.sp == 22 || nstask->key.dp == 22) {
+			if (nstask->skey.sp == 22 || nstask->skey.dp == 22) {
 				return NS_STOP;
 			}
 			break;
@@ -291,11 +291,9 @@ int32_t init_task_info(ns_task_t *nstask)
 
 	if (ret != 0) {
 		// some error
-		dbg(5, "ret=%d", ret);
 		ret = NS_DROP;
 	}
 	else if (!pskb_may_pull(skb, pkt_len)) {
-		ret = 1;
 		ns_err("Abnormal sized packet: SRC=" IP_FMT " DST=" IP_FMT " PROTO=%d hsize=%d dsize=%d",
 				IPN(iph->saddr), IPN(iph->daddr), iph->protocol, nstask->ip_hlen, 0);
 		ret = NS_ACCEPT;
@@ -304,7 +302,7 @@ int32_t init_task_info(ns_task_t *nstask)
 		ret = NS_ACCEPT;
 	}
 
-	DBGKEY(4, KEY, &nstask->key);
+	DBGKEY(4, SKEY, &nstask->skey);
 
 	return ret;
 }
@@ -344,7 +342,7 @@ uint16_t parse_ip_options(iph_t* iph)
 			olen=*optp;
 			optp+=olen-1;
 			optsdone+=olen;
-			ip_opt_flags |= WIPOPT_SEC;
+			ip_opt_flags |= IPOPT_SEC;
 			break;
 
 		case IPOPT_LSRR:
@@ -353,7 +351,7 @@ uint16_t parse_ip_options(iph_t* iph)
 			olen=*optp;
 			optp+=olen-1;
 			optsdone+=olen;
-			ip_opt_flags |= WIPOPT_LSRR;
+			ip_opt_flags |= IPOPT_LSRR;
 			break;
 
 		case IPOPT_SSRR:
@@ -362,7 +360,7 @@ uint16_t parse_ip_options(iph_t* iph)
 			olen=*optp;
 			optp+=olen-1;
 			optsdone+=olen;
-			ip_opt_flags |= WIPOPT_SSRR;
+			ip_opt_flags |= IPOPT_SSRR;
 			break;
 
 		case IPOPT_RR:
@@ -371,7 +369,7 @@ uint16_t parse_ip_options(iph_t* iph)
 			olen=*optp;
 			optp+=olen-1;
 			optsdone+=olen;
-			ip_opt_flags |= WIPOPT_RR;
+			ip_opt_flags |= IPOPT_RR;
 			break;
 
 		case IPOPT_SID:
@@ -385,7 +383,7 @@ uint16_t parse_ip_options(iph_t* iph)
 			}
 			optp+=olen-1;
 			optsdone+=olen;
-			ip_opt_flags |= WIPOPT_SID;
+			ip_opt_flags |= IPOPT_SID;
 			break;
 
 		case IPOPT_TIMESTAMP:
@@ -395,7 +393,7 @@ uint16_t parse_ip_options(iph_t* iph)
 			olen=*optp;
 			optp+=olen-1;
 			optsdone+=olen;
-			ip_opt_flags |= WIPOPT_TIMESTAMP;
+			ip_opt_flags |= IPOPT_TIMESTAMP;
 			break;
 
 		case IPOPT_RA:
@@ -409,7 +407,7 @@ uint16_t parse_ip_options(iph_t* iph)
 			}
 			optp+=olen-1;
 			optsdone+=olen;
-			ip_opt_flags |= WIPOPT_RA;
+			ip_opt_flags |= IPOPT_RA;
 			break;
 
 		default:
@@ -425,5 +423,106 @@ uint16_t parse_ip_options(iph_t* iph)
 	}
 
 	return ip_opt_flags;
+}
+
+int32_t parse_tcp_options(ns_task_t* nstask)
+{
+	uint8_t buff[40];
+	uint8_t *ptr;
+	int32_t length = nstask->l4_hlen - sizeof(struct tcphdr);
+	int32_t opsize, i;
+	uint32_t tmp;
+	topt_t *topt = (topt_t*)&nstask->topt;
+
+	if (length < 1)
+		return 0;
+
+	ptr = skb_header_pointer(nstask->pkt, nstask->ip_hlen + sizeof(struct tcphdr), length, buff);
+	if (ptr == NULL)
+		return -1;
+
+	topt->td_scale = topt->flags = topt->sack = 0;
+
+	while (length > 0) {
+		int32_t opcode=*ptr++;
+
+		switch (opcode) {
+		case TCPOPT_EOL:
+			return 0;
+
+		case TCPOPT_NOP:	/* Ref: RFC 793 section 3.1 */
+			length--;
+			continue;
+
+		default:
+			opsize=*ptr++;
+
+			if (opsize < 2) /* "silly options" */
+				return 0;
+
+			if (opsize > length)
+				break;	/* don't parse partial options */
+
+			switch(opcode) {
+			case TCPOPT_SACK_PERM:
+				if (opsize == TCPOLEN_SACK_PERM)
+					topt->flags |= TOPT_FLAG_SACK_PERM;
+				break;
+
+			case TCPOPT_WINDOW:
+				if (opsize == TCPOLEN_WINDOW) {
+					topt->td_scale = *(uint8_t *)ptr;
+
+					if (topt->td_scale > 14) {
+						/* See RFC1323 */
+						topt->td_scale = 14;
+					}
+
+					topt->flags |= TOPT_FLAG_WINDOW_SCALE;
+				}
+				break;
+
+			case TCPOPT_MSS:
+				if(opsize == TCPOLEN_MSS) {
+					topt->mss = ntohs(get_unaligned((__u16 *)ptr));
+					topt->flags |= TOPT_FLAG_MSS;
+				}
+				break;
+
+			case TCPOPT_SACK:
+				if ( (opsize >= (TCPOLEN_SACK_BASE + TCPOLEN_SACK_PERBLOCK))
+					&& !((opsize - TCPOLEN_SACK_BASE) % TCPOLEN_SACK_PERBLOCK)) {
+
+					for (i = 0; i < (opsize - TCPOLEN_SACK_BASE); i += TCPOLEN_SACK_PERBLOCK) {
+						tmp = ntohl(*((u_int32_t *)(ptr+i)+1));
+
+						if (after(tmp, topt->sack)) {
+							topt->flags |= TOPT_FLAG_SACK;
+							topt->sack = tmp;
+						}
+					}
+				}
+
+				break;
+
+			case TCPOPT_TIMESTAMP:
+				if (opsize == TCPOLEN_TIMESTAMP) {
+					uint32_t *tsecr;
+
+					topt->flags |= TOPT_FLAG_TIMESTAMP;
+					tsecr = (uint32_t*)ptr;
+
+					//opt_rx->rcv_tsval = get_unaligned_be32(ptr);
+					topt->tsval = ntohl(*tsecr);
+				}
+
+			} // end of opcode
+
+			ptr += opsize - 2;
+			length -= opsize;
+		}
+	}
+
+	return 0;
 }
 

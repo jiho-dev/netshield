@@ -1,17 +1,11 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
-#include <session.h>
+#include <typedefs.h>
 #include <ns_task.h>
 #include <ns_macro.h>
+#include <session.h>
 #include <log.h>
-#include <extern.h>
-#include <version.h>
 #include <misc.h>
-#include <options.h>
-#include <ns_malloc.h>
 #include <ns_ioctl.h>
 #include <khypersplit.h>
 #include <pmgr.h>
@@ -19,6 +13,7 @@
 //////////////////////////////////////////////////////
 nsdev_t  			 nsdev;
 struct fasync_struct *nsdev_async_q[2];
+int32_t g_enable_nic_notify = 0;
 
 int32_t nsdev_inetaddr_event(struct notifier_block *this, unsigned long event, void *ptr);
 static struct notifier_block nsdev_ipaddr_noti = {
@@ -45,6 +40,7 @@ int32_t nsdev_main_ioctl(uint32_t cmd, unsigned long arg);
 int32_t nsdev_fasync(int32_t fd, struct file *filp, int32_t on);
 
 int32_t smgr_setup_session_info(char* arg);
+void fwp_update_nat_ip(int32_t if_idx);
 
 
 /* -------------------------------- */
@@ -127,7 +123,7 @@ int32_t nsdev_fasync(int32_t fd, struct file *filp, int32_t on)
 	if (qidx != -1) {
 		ret = fasync_helper(fd, filp, on, &nsdev_async_q[qidx]);
 
-		DBG(5, "ret=%d, qidx=%d, on=%d, queue=0x%p",
+		dbg(5, "ret=%d, qidx=%d, on=%d, queue=0x%p",
 			ret,
 			qidx, on,
 			nsdev_async_q[qidx]);
@@ -180,18 +176,23 @@ void nsdev_clean(void)
 int32_t nsdev_inetaddr_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	// refer to fib_inetaddr_event()
-	uint32_t ip;
+	ip4_t ip;
 	struct in_ifaddr *ifa = (struct in_ifaddr*)ptr;
 	netdev_t* dev = ifa->ifa_dev->dev;;
 
+	if (!dev || !netshield_running ||  g_enable_nic_notify) {
+		return NOTIFY_DONE;
+	}
+
 	ip = ns_get_nic_ip(dev->ifindex);
 
-	DBG(5, "%s: event=%lu, IP=" IP_FMT, dev->name, event, IPH(ip));
+	dbg(5, "%s: event=%lu, IP=" IP_FMT, dev->name, event, IPH(ip));
 
 	switch (event) {
 	case NETDEV_UP:
 	case NETDEV_CHANGEADDR:
 		if (dev) {
+			fwp_update_nat_ip(dev->ifindex);
 		}
 		break;
 	case NETDEV_DOWN:
@@ -203,12 +204,13 @@ int32_t nsdev_inetaddr_event(struct notifier_block *this, unsigned long event, v
 
 int32_t nsdev_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
+#if 0
 	// refer to fib_netdev_event()
 	struct net_device *dev = ptr;
 	//uint32_t ip;
 
 	//ip = ns_get_nic_ip(dev->ifindex);
-	//DBG(5, "%s: event=%lu, %u", dev->name, event, ip);
+	//dbg(5, "%s: event=%lu, %u", dev->name, event, ip);
 	
 	if (!netshield_running)
 		return NOTIFY_DONE;
@@ -222,6 +224,7 @@ int32_t nsdev_netdev_event(struct notifier_block *this, unsigned long event, voi
 	default:
 		break;
 	}
+#endif
 
 	return NOTIFY_DONE;
 }
@@ -244,7 +247,7 @@ long nsdev_ioctl(struct file *filp, uint32_t cmd, unsigned long arg)
 	minor = iminor(inode);
 	cmd = _IOC_NR(cmd);
 
-	DBG(5, "nsdev ioctl: minor=%d, cmd=%d", minor, cmd);
+	dbg(5, "nsdev ioctl: minor=%d, cmd=%d", minor, cmd);
 
 	switch(minor) {
 	case NSDEV_MAIN:
@@ -264,7 +267,7 @@ int32_t nsdev_main_ioctl(uint32_t cmd, unsigned long arg)
 
 	ENT_FUNC(3);
 
-	DBG(5, "IOCTL CMD: %d", cmd);
+	dbg(5, "IOCTL CMD: %d", cmd);
 
 	err = 0;
 
@@ -272,8 +275,8 @@ int32_t nsdev_main_ioctl(uint32_t cmd, unsigned long arg)
 	case IOCTL_START:
 		return 0;
 
-	case IOCTL_APPLY_FW_POLICY:
-		return pmgr_apply_fw_policy((char*)arg);
+	case IOCTL_APPLY_POLICY:
+		return pmgr_apply_policy((char*)arg);
 
 	case IOCTL_SESSION_INFO:
 		return smgr_setup_session_info((char*)arg);

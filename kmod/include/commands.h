@@ -1,6 +1,8 @@
 #ifndef __NS_COMMAND_H__
 #define __NS_COMMAND_H__
 
+#include <ns_task.h>
+
 typedef void 	(*CB_TYPE0)(void);
 typedef int32_t (*CB_TYPE1)(void);
 typedef int32_t (*CB_TYPE2)(ns_task_t*);
@@ -34,6 +36,8 @@ enum nscmd_index{
 	NSCMD_IDX(pmgr),
 	NSCMD_IDX(nsdev),
 	NSCMD_IDX(timer),
+	NSCMD_IDX(nat),
+	NSCMD_IDX(arpp),
 
 	NS_CMD_MAX
 };

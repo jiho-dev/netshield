@@ -1,11 +1,9 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
-#include <session.h>
-#include <ns_task.h>
+#include <typedefs.h>
 #include <ns_macro.h>
+#include <timer.h>
+#include <session.h>
 #include <hashed_llist.h>
 #include <smgr.h>
 

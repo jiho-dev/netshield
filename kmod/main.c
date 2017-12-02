@@ -1,17 +1,13 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <skey.h>
-#include <timer.h>
-#include <session.h>
-#include <ns_task.h>
+#include <typedefs.h>
 #include <ns_macro.h>
+#include <session.h>
 #include <commands.h>
 #include <log.h>
 #include <extern.h>
 #include <version.h>
 #include <misc.h>
-#include <smgr.h>
 #include <options.h>
 
 uint32_t netshield_running __read_mostly;
@@ -105,7 +101,9 @@ void print_struct_size(void)
 #ifdef CONFIG_NS_DEBUG
 	DBG(0, "=========================");
 
-	PRINT_SZ(sk_t);
+	PRINT_SZ(skey_t);
+	PRINT_SZ(nscmd_t);
+	PRINT_SZ(mpolicy_t);
 	PRINT_SZ(ns_task_t);
 	PRINT_SZ(session_t);
 #if 0
@@ -160,22 +158,28 @@ int32_t netshield_main(netshield_hook_state_t *state)
 	ns_task_t *nstask = NULL;
 	int32_t ret = NS_DROP;
 
-	FUNC_TEST_MSG(6, "=====> Start NetShield here <=====");
+	dbg(6, "=====> Start PRE NetShield here <=====");
 
 	skb = state->skb;
 	iph = ns_iph(skb);
 	nstask = ns_task(skb);
 	nstask->pkt = skb;
-	nstask->key.onic = 0;
-	nstask->key.inic = state->in == NULL ? 0 : state->in->ifindex;
+	nstask->skey.onic = 0;
+	nstask->skey.inic = state->in == NULL ? 0 : state->in->ifindex;
 
 	prefetch(iph);
+
+#warning "Fixme: Testing code"
+	// FIXME: for Testing...
+	if (iph->protocol == IPPROTO_IGMP) {
+		return NS_ACCEPT;
+	}
 
 	if (state->hook == NS_HOOK_LOCAL_OUT) {
 		nstask->flags |= TASK_FLAG_HOOK_LOCAL_OUT;
 
 		if (unlikely(ns_is_loopback(iph->saddr))) {
-			FUNC_TEST_MSG(5, "Localhost Packet");
+			dbg(5, "Localhost Packet");
 			ret = NS_ACCEPT;
 			goto END_MAIN;
 		}
@@ -186,11 +190,41 @@ int32_t netshield_main(netshield_hook_state_t *state)
 
 END_MAIN:
 
-	FUNC_TEST_MSG(6, "All processing for Security is done: %s(return:%d)",
+	dbg(6, "All processing for Security is done: %s(return:%d)",
 			ret == NS_QUEUE ? "Queued" :
 			ret == NS_DROP ? "Droped" : "Allowed", ret);
 
-	FUNC_TEST_MSG(6, "=====> End NetShield <=====");
+	dbg(6, "=====> End NetShield <=====");
+
+	return ret;
+}
+
+int32_t netshield_post_main(netshield_hook_state_t *state) 
+{
+	iph_t *iph = NULL;
+	skb_t *skb = NULL;
+	ns_task_t *nstask = NULL;
+	int32_t ret = NS_DROP;
+
+	dbg(0, "=====> Start POST NetShield here <=====");
+
+	skb = state->skb;
+	iph = ns_iph(skb);
+	nstask = ns_task(skb);
+
+	// update out NIC
+	nstask->skey.onic = state->out == NULL ? 0 : state->out->ifindex;
+	nstask->flags |= TASK_FLAG_HOOK_POST_ROUTING;
+
+	prefetch(iph);
+
+	ret = nscmd_run_command(nstask);
+
+	dbg(0, "All processing for Security is done: %s(return:%d)",
+			ret == NS_QUEUE ? "Queued" :
+			ret == NS_DROP ? "Droped" : "Allowed", ret);
+
+	dbg(0, "=====> End NetShield <=====");
 
 	return ret;
 }

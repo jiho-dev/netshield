@@ -1,10 +1,7 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
+#include <typedefs.h>
 #include <session.h>
-#include <ns_task.h>
 #include <ns_macro.h>
 #include <commands.h>
 #include <ns_sysctl.h>

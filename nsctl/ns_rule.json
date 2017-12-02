@@ -1,0 +1,117 @@
+{
+	"version": "1.0",
+	"id" 	: "NetShield",
+	"desc" 	: "This is NetShield Rules",
+	"policy" : {
+		"firewall": [
+			{
+			"desc" 	: "SSH Server",
+			"src_ip"  : [ "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "204.152.188.196",  "204.152.188.196"],
+			"src_port": [  0, 65535],
+			"dst_port": [  22, 22],
+			"protocol": [  6, 6],
+			"nic"     : [  "eth0", "eth0"],
+			"action"  : "allow",
+			"state"   : "enable",
+			},
+			{
+			"desc" 	: "SSH Server",
+			"src_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"src_port": [  0, 65535],
+			"dst_port": [  22, 22],
+			"protocol": [  6, 6],
+			"nic"     : [  "eth1", "eth4"],
+			"action"  : "allow",
+			"state"   : "enable",
+			},
+			{
+			"desc" 	: "Web Server",
+			"src_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"src_port": [  0, 65535],
+			"dst_port": [  80, 80],
+			"protocol": [  6, 6],
+			"nic"     : [  "any", "any"],
+			"action"  : "allow",
+			"state"   : "enable",
+			},
+			{
+			"desc" 	: "All allow rule",
+			"src_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"src_port": [  0, 65535],
+			"dst_port": [  0, 65535],
+			"protocol": [  0, 255],
+			"nic"     : [  "any", "any"],
+			"action"  : "allow",
+			"state"   : "enable",
+			},
+			{
+			"desc" 	: "All allow rule",
+			"src_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"src_port": [  0, 65535],
+			"dst_port": [  0, 65535],
+			"protocol": [  0, 255],
+			"nic"     : [  "any", "any"],
+			"action"  : "allow",
+			"state"   : "disable",
+			},
+			{
+			"desc" 	: "Default Firewall rule",
+			"src_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"src_port": [  0, 65535],
+			"dst_port": [  0, 65535],
+			"protocol": [  0, 255],
+			"nic"     : [  "any", "any"],
+			"action"  : "drop",
+			"state"   : "enable",
+			},
+		],
+
+		"nat": [
+			{
+			"desc" : "SNAT Rule",
+			"src_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"src_port": [  0, 65535],
+			"dst_port": [  0, 65535],
+			"protocol": [  0, 255],
+			"nic"     : [  "any", "any"],
+			// snat, dnat, bnat, pnat
+			"action"  : "snat",		
+			"state"   : "enable",
+			"nat_info": 
+			{
+				"snat": 
+				{
+					// snat_masking, snat_hash, snat_napt, dnat_redir, dnat_local_redir
+					"type": "snat_napt", 
+					//"option": ["arp_proxy", "dynamic_ip"],
+					"option": ["arp_proxy"],
+					"nic": "eth2",	// any, eth0 ~
+					"nat_ip":   [  "1.1.1.3", "1.1.1.3"],
+					"nat_port": [  3000, 65535],
+				},
+				"dnat": {
+				},
+			},
+			},
+
+			{
+			"desc" 	: "Default NAT rule",
+			"src_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"dst_ip"  : [  "0.0.0.0", "0.0.0.0"],
+			"src_port": [  0, 65535],
+			"dst_port": [  0, 65535],
+			"protocol": [  0, 255],
+			"nic"     : [  "any", "any"],
+			"action"  : "drop",
+			"state"   : "enable",
+			},
+		],
+	},
+}

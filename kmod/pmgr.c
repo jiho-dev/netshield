@@ -1,38 +1,32 @@
 #include <include_os.h>
 
-#include <ns_type_defs.h>
-#include <timer.h>
-#include <skey.h>
-#include <session.h>
-#include <ns_task.h>
+#include <typedefs.h>
 #include <ns_macro.h>
+#include <session.h>
 #include <commands.h>
-#include <smgr.h>
 #include <log.h>
-//#include <extern.h>
 #include <misc.h>
 #include <ns_malloc.h>
 #include <khypersplit.h>
-#include <fw_policy.h>
 #include <pmgr.h>
 #include <ioctl_policy.h>
 
 
 //////////////////////////////////////////////////////
+// Policy Manager
 
 pmgr_t g_pmgr;
 
 DECLARE_DBG_LEVEL(2);
 
 //////////////////////////////////////////////////////
-
-int32_t hypersplit_load(ioctl_policyset_t *ioctl_ps, policyset_t *ps);
-void 	hypersplit_free(hypersplit_t *hs);
-uint32_t hypersplit_search(hypersplit_t *hs, pktinfo_t *pkt);
+int32_t  hypersplit_load(ioctl_policyset_t *ioctl_ps, policyset_t *ps);
+void 	 hypersplit_free(hypersplit_t *hs);
 
 void 	pmgr_policyset_free(policyset_t *ps);
 int32_t fwp_load(ioctl_policyset_t *ioctl_ps, policyset_t *ps);
-int32_t pmgr_commit_new_policy(policyset_t *ps);
+int32_t pmgr_commit_new_policy(policyset_t *ps, int32_t nat);
+void fwp_update_nat_arp(policyset_t *ps);
 
 
 /* -------------------------------- */
@@ -86,8 +80,8 @@ void pmgr_policyset_free(policyset_t *ps)
 		ns_free_v(ps->hs_mem);
 	}
 
-	if (ps->fw_policy) {
-		ns_free_v(ps->fw_policy);
+	if (ps->policy) {
+		ns_free_v(ps->policy);
 	}
 
 	ns_free(ps);
@@ -117,12 +111,12 @@ policyset_t* pmgr_get_new_policyset(void)
 }
 #endif
 
-policyset_t* pmgr_get_policyset(void)
+policyset_t* pmgr_get_policyset(int32_t idx)
 {
 	policyset_t *ps = NULL;
 
 	ns_rd_lock_irq() {
-		ps = (policyset_t*)rcu_dereference(g_pmgr.policyset);
+		ps = (policyset_t*)rcu_dereference(g_pmgr.policyset[idx]);
 		if (ps) {
 			if (atomic_read(&ps->refcnt) > 0) {
 				atomic_inc(&ps->refcnt);
@@ -139,7 +133,17 @@ policyset_t* pmgr_get_policyset(void)
 	return ps;
 }
 
-int32_t pmgr_apply_fw_policy(char* arg)
+policyset_t* pmgr_get_firewall_policyset(void)
+{
+	return pmgr_get_policyset(0);
+}
+
+policyset_t* pmgr_get_nat_policyset(void)
+{
+	return pmgr_get_policyset(1);
+}
+
+int32_t pmgr_apply_policy(char* arg)
 {
 	int32_t ret = 0;
 	policyset_t *ps = NULL;
@@ -169,7 +173,7 @@ int32_t pmgr_apply_fw_policy(char* arg)
 		goto END;
 	}
 
-	ret = pmgr_commit_new_policy(ps);
+	ret = pmgr_commit_new_policy(ps, ioctl_ps.flags & POLICY_TYPE_NAT);
 
 END:
 	if (ret != 0) {
@@ -180,45 +184,51 @@ END:
 	return ret;
 }
 
-int32_t pmgr_commit_new_policy(policyset_t *ps)
+int32_t pmgr_commit_new_policy(policyset_t *ps, int32_t nat)
 {
 	policyset_t *old = NULL;
 
+	nat = !!nat;
+
 	// change new memory
 	ns_rd_lock_irq() {
-	//ns_rw_lock(&g_pmgr.lock) {
 
-		old = (policyset_t*)rcu_dereference(g_pmgr.policyset);
-		rcu_assign_pointer(g_pmgr.policyset, ps);
+		old = (policyset_t*)rcu_dereference(g_pmgr.policyset[nat]);
+		rcu_assign_pointer(g_pmgr.policyset[nat], ps);
 		if (ps) {
-			ps->version = atomic_add_return(1, &g_pmgr.version_cnt);
+			ps->version = (uint16_t)(atomic_add_return(1, &g_pmgr.version_cnt) % 65535);
 			pmgr_policyset_hold(ps);
 		}
 
-	//} ns_rw_unlock(&g_pmgr.lock);
 	} ns_rd_unlock_irq();
+
+	if (nat) {
+		fwp_update_nat_arp(ps);
+	}
 
 	if (old) {
 		pmgr_policyset_release(old);
 	}
 
-	dbg(5, "Commit New Policy: 0x%p", ps);
+	dbg(0, "Commit New Policy: 0x%p, ver=%u, nat=%d", ps, ps->version, nat);
 
 	return 0;
 }
 
-fw_policy_t* pmgr_get_fw_policy(policyset_t *ps, uint32_t idx_id)
+fw_policy_t* pmgr_get_fw_policy(policyset_t *ps, uint32_t index)
 {
-	if (idx_id >= ps->num_fw_policy) {
+	if (index >= ps->num_policy) {
+		dbg(0, "out of range: index=%u, num_policy=%u", index, ps->num_policy);
 		return NULL;
 	}
 
-	if (idx_id != ps->fw_policy[idx_id].rule_idx) {
+#if 0
+	if (index != ps->policy[index].rule_idx) {
 		return NULL;
 	}
+#endif
 
-
-	return &ps->fw_policy[idx_id];
+	return &ps->policy[index];
 
 }
 
@@ -230,54 +240,101 @@ int32_t pmgr_init(void)
 
 void pmgr_clean(void)
 {
-	pmgr_policyset_release(g_pmgr.policyset);
-	g_pmgr.policyset = NULL;
+	int32_t i;
+
+	for (i=0; i<PMGR_MAX_SET; i++) {
+		if (g_pmgr.policyset[i]) {
+			pmgr_policyset_release(g_pmgr.policyset[i]);
+		}
+
+		g_pmgr.policyset[i] = NULL;
+	}
 }
 
 int32_t pmgr_main(ns_task_t *nstask)
 {
-	policyset_t* ps ;
-	uint32_t idx_id;
+	policyset_t* fps = NULL, *nps = NULL;
 	pktinfo_t pi;
 	int32_t ret = NS_DROP;
+	uint32_t midx;
+	mpolicy_t *mp;
 
 	ENT_FUNC(3);
 
 	//bzero(&pi, sizeof(pi));
+	bzero(&nstask->mp_fw, sizeof(nstask->mp_fw));
+	mp = &nstask->mp_fw;
 
-	pi.dims[DIM_SIP]   = (uint32_t)nstask->key.src;
-	pi.dims[DIM_DIP]   = (uint32_t)nstask->key.dst;
-	pi.dims[DIM_SPORT] = (uint16_t)nstask->key.sp;
-	pi.dims[DIM_DPORT] = (uint16_t)nstask->key.dp;
-	pi.dims[DIM_PROTO] = (uint8_t)nstask->key.proto;
+	pi.dims[DIM_SIP]   = (uint32_t)nstask->skey.src;
+	pi.dims[DIM_DIP]   = (uint32_t)nstask->skey.dst;
+	pi.dims[DIM_SPORT] = (uint16_t)nstask->skey.sp;
+	pi.dims[DIM_DPORT] = (uint16_t)nstask->skey.dp;
+	pi.dims[DIM_PROTO] = (uint8_t)nstask->skey.proto;
+	pi.dims[DIM_NIC]   = nstask->skey.inic;
 
-	ps = pmgr_get_policyset();
-	if (!ps) {
-		dbg(0, "No Policy !");
+	// for Firewall
+	fps = pmgr_get_firewall_policyset();
+	if (!fps) {
+		dbg(0, "No Firewall Policy !");
 		return NS_DROP;
 	}
 
-	idx_id = hypersplit_search(&ps->hypersplit, &pi);
-
-	nstask->matched_fwpolicy_idx = idx_id;
-	nstask->matched_fwpolicy_ver = ps->version;
-
-	dbg(5, "Matched Rule ID: %d" ,idx_id);
-
-	if (ps->hypersplit.def_rule == idx_id) {
+	midx = hypersplit_search(&fps->hypersplit, &pi);
+	if (midx == HS_NO_RULE) {
 		// matched default rule
-		//dbg(0, "No rule");
-		goto END;
+		dbg(0, "No rule");
+		goto ERR;
 	}
-	else {
-		// call smgr_slow_main()
-		append_cmd(nstask, smgr_slow);
+	else if ((mp->policy = pmgr_get_fw_policy(fps, midx)) == NULL) {
+		goto ERR;
+	}
+	else if (!(mp->policy->action & ACT_ALLOW)) {
+		goto ERR;
 	}
 
-	ret = NS_ACCEPT;
+	dbg(0, "Matched Firewall Rule ID: %u" , midx);
 
-END:
-	pmgr_policyset_release(ps);
+	//mp->id = 0;
+	//mp->idx = midx;
+	//mp->ver = nps->version;
+	mp->policy_set = fps;
+	//mp->flags = MPOLICY_HAVE_POLICY;
+
+	// call smgr_slow_main()
+	append_cmd(nstask, smgr_slow);
+
+	// for NAT
+	mp = &nstask->mp_nat;
+	bzero(&nstask->mp_nat, sizeof(nstask->mp_nat));
+	nps = pmgr_get_nat_policyset();
+	if (nps) {
+		midx = hypersplit_search(&nps->hypersplit, &pi);
+		if (midx != HS_NO_RULE &&
+			((mp->policy = pmgr_get_fw_policy(nps, midx)) != NULL)) {
+
+			dbg(0, "Matched NAT Rule ID: %u" , midx);
+			//mp->id = 0;
+			//mp->idx = midx;
+			//mp->ver = nps->version;
+			mp->policy_set = nps;
+			//mp->flags = MPOLICY_HAVE_POLICY;
+		}
+		else {
+			mp->policy = NULL;
+			pmgr_policyset_release(nps);
+		}
+	}
+
+	return NS_ACCEPT;
+
+ERR:
+	if (fps) {
+		pmgr_policyset_release(fps);
+	}
+
+	if (nps) {
+		pmgr_policyset_release(nps);
+	}
 
 	return ret;
 }

@@ -1,11 +1,10 @@
 #include <include_os.h>
 #include <net/addrconf.h>
 
-#include <ns_type_defs.h>
-#include <skey.h>
+#include <typedefs.h>
 #include <timer.h>
-#include <session.h>
 #include <ns_task.h>
+#include <session.h>
 #include <options.h>
 #include <ns_macro.h>
 #include <misc.h>
@@ -360,7 +359,8 @@ void dump_pkt(char* func, int32_t line, iph_t *iph, uint8_t inic)
 		p = NULL;
 	}
 
-	snprintf(buf, 256, "NetShield: " NS_FUNC_FMT "Packet Dump:iph=0x%p NIC=%s(%u):", func, line, iph, p?p:"NULL", inic);
+	//snprintf(buf, 256, "NetShield: " NS_FUNC_FMT "Packet Dump:iph=0x%p NIC=%s(%u):", func, line, iph, p?p:"NULL", inic);
+	snprintf(buf, 256, "NetShield: " NS_FUNC_FMT "Packet Dump:NIC=%s(%u):", func, line, p?p:"NULL", inic);
 
 	if (iph->protocol == IPPROTO_ICMP) {
 		printk("%s"IP_FMT "->" IP_FMT ":%s(%d)-type:%d id:%d code:%d seq:%d \n",
@@ -402,6 +402,53 @@ void dump_eth_pkt(char* data, int32_t len, char *msg)
 	printk("\n");
 
 }
+
+#if defined(__LITTLE_ENDIAN)
+void ns_dec_ip(ip4_t *ip)
+{
+	char* str_ip = (char*)ip;
+
+	if (ip == NULL)
+		return;
+
+	str_ip[0] --;
+}
+
+void ns_inc_ip(ip4_t* ip)
+{
+	char* str_ip = (char*)ip;
+
+	if (ip == NULL)
+		return;
+
+	str_ip[0] ++;
+}
+#elif defined(__BIG_ENDIAN)
+
+void ns_dec_ip(ip4_t *ip)
+{
+	char* str_ip = (char*)ip;
+
+	if (ip == NULL)
+		return;
+
+#error "We'll need to get a test on BIG endian mode, Please call patrick !!"
+//	str_ip[3] --;
+}
+
+void ns_inc_ip(ip4_t* ip)
+{
+	char* str_ip = (char*)ip;
+
+	if (ip == NULL)
+		return;
+
+#error "We'll need to get a test on BIG endian mode, Please call patrick !!"
+//	str_ip[3] ++;
+}
+#else
+#error Not defined Endian Mode
+#endif
 
 int32_t ns_is_local_address(ip4_t ip)
 {
@@ -694,5 +741,11 @@ int32_t ns_get_nic_idx_by_ip(ip4_t ip)
 	}
 
 	return nic;
+}
+
+void ns_set_transport_header(skb_t* skb, uint8_t* iph, int32_t ip_hlen)
+{
+	// set ip payload pointer
+	skb_set_transport_header(skb, ip_hlen);
 }
 
