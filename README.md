@@ -43,7 +43,7 @@ git clone https://github.com/jhjgithub/netshield.git
 cd netshield
 cd linux-4.10.17
 make menuconfig
-make bImage
+make bzImage
 ...
 cd ../libhypersplit
 make
