@@ -23,10 +23,10 @@ NetShield adopts brand-new technologies:
 * ARP proxy: Done(2017/12/2)
 * BlackList matching Source IP: Under Developing
 * Deep Packet Inspection: Under Researching
- * Exact Pattern Matching
- * PCRE Pattern Matching
- * Hyperscan in kernel for Matching
- * Application Identification by traffic 
+	- Exact Pattern Matching
+ 	- PCRE Pattern Matching
+ 	- Hyperscan in kernel for Matching
+ 	- Application Identification by traffic 
 * TCP MSS Hack: TBD
 * Support DPDK: TBD
 * IPV6: TBD
