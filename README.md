@@ -12,6 +12,7 @@ NetShield adopts brand-new technologies:
 * Sesstion Table: Cuckoo Hash
 * Hash Algorithm: MurmurHash3
 * Session Timeout: Wheel Timer
+* Balcklist: Interval Tree from Linux
 
 ## Features:
 
@@ -20,17 +21,19 @@ NetShield adopts brand-new technologies:
 * TCP Stateful Tracking: Done(2017/10/30)
 * NAT: Done(2017/12/2)
 * ARP proxy: Done(2017/12/2)
-* BlackList matching Source IP: Soon
-* TCP MSS Hack: Soon
+* BlackList matching Source IP: Under Developing
+* Deep Packet Inspection: Under Researching
+ * Exact Pattern Matching
+ * PCRE Pattern Matching
+ * Hyperscan in kernel for Matching
+ * Application Identification by traffic 
+* TCP MSS Hack: TBD
 * Support DPDK: TBD
 * IPV6: TBD
 * IP v4/v6 Fragmention: TBD
 * Syn Proxy: TBD
 * L2 Firewall: TBD
-* Application Firewall: TBD
 * IPSEC : TBD
-* Exact Pattern Matching for DPI: TBD
-* PCRE Pattern Matching for DPI: TBD
 * Rate Limits: TBD
 
 ## Compile: 
