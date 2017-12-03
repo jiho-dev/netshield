@@ -22,7 +22,7 @@ NetShield adopts brand-new technologies:
 * NAT: Done(2017/12/2)
 * ARP proxy: Done(2017/12/2)
 * BlackList matching Source IP: Under Developing
-* Deep Packet Inspection: Under Researching
+* Deep Packet Inspection: Under Researching. It will take some time because of the state-of-the-art technology
 	- Exact Pattern Matching
  	- PCRE Pattern Matching
  	- Hyperscan in kernel for Matching
